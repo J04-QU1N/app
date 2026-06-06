@@ -207,24 +207,23 @@ class _EditorScreenState extends State<EditorScreen> {
     controller.dispose();
     if (label == null || label.trim().isEmpty) return;
 
-    final int? previousSelectedLashId = selectedLashId;
-    final bool previousEditMenuOpen = isEditMenuOpen;
-    final LashEditMode previousEditMode = lashEditMode;
-
     try {
-      // Exportamos exactamente el lienzo 3:4, pero sin borde, pads ni menús de selección.
-      // Esto evita que la captura guarde una composición distinta a la que ve el usuario.
-      setState(() {
-        _isExportingImage = true;
-        selectedLashId = null;
-        isEditMenuOpen = false;
-        lashEditMode = LashEditMode.move;
-      });
+      // IMPORTANTÍSIMO: no cambiamos selectedLashId, menú ni modo antes de capturar.
+      // En versiones anteriores se limpiaba la selección para ocultar controles y eso podía
+      // disparar un rebuild con otra geometría. Ahora solo ocultamos overlays visuales dentro
+      // del mismo canvas, sin tocar la posición/tamaño real de las pestañas.
+      setState(() => _isExportingImage = true);
+      await WidgetsBinding.instance.endOfFrame;
+      await Future<void>.delayed(const Duration(milliseconds: 24));
       await WidgetsBinding.instance.endOfFrame;
 
       final RenderRepaintBoundary boundary = _editorCaptureKey.currentContext!
           .findRenderObject()! as RenderRepaintBoundary;
-      final ui.Image image = await boundary.toImage(pixelRatio: 3);
+
+      // Usamos el pixelRatio del dispositivo para que el PNG sea una captura 1:1 del canvas
+      // visible. Escalar a un ratio fijo puede producir pequeñas diferencias de rasterizado.
+      final double pixelRatio = MediaQuery.of(context).devicePixelRatio;
+      final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
       final ByteData? byteData = await image.toByteData(
         format: ui.ImageByteFormat.png,
       );
@@ -258,12 +257,7 @@ class _EditorScreenState extends State<EditorScreen> {
       );
     } finally {
       if (mounted) {
-        setState(() {
-          _isExportingImage = false;
-          selectedLashId = previousSelectedLashId;
-          isEditMenuOpen = previousEditMenuOpen;
-          lashEditMode = previousEditMode;
-        });
+        setState(() => _isExportingImage = false);
       }
     }
   }
@@ -574,7 +568,7 @@ class _EditorScreenState extends State<EditorScreen> {
                         onTap: closeBottomMenus,
                         child: Stack(
                           fit: StackFit.expand,
-                          clipBehavior: Clip.none,
+                          clipBehavior: _isExportingImage ? Clip.hardEdge : Clip.none,
                           children: [
                             Image.file(
                               File(selectedImagePath),
