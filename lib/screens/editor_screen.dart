@@ -4,7 +4,9 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'crop_image_screen.dart';
@@ -170,6 +172,129 @@ class _EditorScreenState extends State<EditorScreen> {
     await replaceImage(source);
   }
 
+
+  Future<Uint8List> _renderEditedImageBytes() async {
+    final RenderBox editorBox = _editorCaptureKey.currentContext!
+        .findRenderObject()! as RenderBox;
+    final Size logicalSize = editorBox.size;
+    final double pixelRatio = MediaQuery.of(context).devicePixelRatio;
+
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+
+    canvas.scale(pixelRatio, pixelRatio);
+
+    final ui.Image backgroundImage = await _loadUiImageFromFile(selectedImagePath);
+    paintImage(
+      canvas: canvas,
+      rect: Offset.zero & logicalSize,
+      image: backgroundImage,
+      fit: BoxFit.fill,
+      filterQuality: FilterQuality.high,
+    );
+
+    for (final LashElement lash in lashes) {
+      final ui.Image lashImage = await _loadUiImageFromAsset(lash.imagePath);
+      _paintLashOnCanvas(canvas, lashImage, lash);
+    }
+
+    final ui.Picture picture = recorder.endRecording();
+    final ui.Image image = await picture.toImage(
+      (logicalSize.width * pixelRatio).round(),
+      (logicalSize.height * pixelRatio).round(),
+    );
+    final ByteData? byteData = await image.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+
+    if (byteData == null) {
+      throw StateError('No se pudo generar la imagen exportada.');
+    }
+
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<ui.Image> _loadUiImageFromFile(String path) async {
+    final Uint8List bytes = await File(path).readAsBytes();
+    return _decodeUiImage(bytes);
+  }
+
+  Future<ui.Image> _loadUiImageFromAsset(String assetPath) async {
+    final ByteData data = await rootBundle.load(assetPath);
+    return _decodeUiImage(data.buffer.asUint8List());
+  }
+
+  Future<ui.Image> _decodeUiImage(Uint8List bytes) async {
+    final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+    final ui.FrameInfo frame = await codec.getNextFrame();
+    return frame.image;
+  }
+
+  void _paintLashOnCanvas(Canvas canvas, ui.Image image, LashElement lash) {
+    final Rect baseRect = Rect.fromCenter(
+      center: Offset.zero,
+      width: EditableLashWidget.baseWidth,
+      height: EditableLashWidget.baseHeight,
+    );
+
+    canvas.save();
+    canvas.translate(lash.position.dx, lash.position.dy);
+    canvas.rotate(lash.rotation);
+    canvas.scale(
+      (lash.isMirrored ? -1.0 : 1.0) * lash.scale * lash.stretchX,
+      lash.scale * lash.stretchY,
+    );
+    canvas.clipRect(baseRect);
+
+    final Rect containedRect = _applyContain(
+      inputSize: Size(image.width.toDouble(), image.height.toDouble()),
+      outputRect: baseRect,
+    );
+
+    canvas.save();
+    canvas.translate(baseRect.center.dx, baseRect.center.dy);
+    canvas.scale(EditableLashWidget.imageContentScale);
+    canvas.translate(-baseRect.center.dx, -baseRect.center.dy);
+
+    final Paint paint = Paint()
+      ..isAntiAlias = true
+      ..filterQuality = FilterQuality.high;
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      containedRect,
+      paint,
+    );
+
+    canvas.restore();
+    canvas.restore();
+  }
+
+  Rect _applyContain({
+    required Size inputSize,
+    required Rect outputRect,
+  }) {
+    final double sourceRatio = inputSize.width / inputSize.height;
+    final double outputRatio = outputRect.width / outputRect.height;
+
+    double width;
+    double height;
+
+    if (sourceRatio > outputRatio) {
+      width = outputRect.width;
+      height = width / sourceRatio;
+    } else {
+      height = outputRect.height;
+      width = height * sourceRatio;
+    }
+
+    return Rect.fromCenter(
+      center: outputRect.center,
+      width: width,
+      height: height,
+    );
+  }
+
   Future<void> saveEditedImage() async {
     final TextEditingController controller = TextEditingController();
 
@@ -217,20 +342,10 @@ class _EditorScreenState extends State<EditorScreen> {
       await Future<void>.delayed(const Duration(milliseconds: 24));
       await WidgetsBinding.instance.endOfFrame;
 
-      final RenderRepaintBoundary boundary = _editorCaptureKey.currentContext!
-          .findRenderObject()! as RenderRepaintBoundary;
-
-      // Usamos el pixelRatio del dispositivo para que el PNG sea una captura 1:1 del canvas
-      // visible. Escalar a un ratio fijo puede producir pequeñas diferencias de rasterizado.
-      final double pixelRatio = MediaQuery.of(context).devicePixelRatio;
-      final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
-      final ByteData? byteData = await image.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
-
-      if (byteData == null) return;
-
-      final Uint8List bytes = byteData.buffer.asUint8List();
+      // Exportamos redibujando el mismo canvas lógico del editor.
+      // Esto evita el bug donde RepaintBoundary podía capturar widgets transformados
+      // con otra escala/origen después de tocar Guardar.
+      final Uint8List bytes = await _renderEditedImageBytes();
       final String safeLabel = label.replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_');
       final Directory saveDirectory = await SavedImageStore.getImagesDirectory();
       final String outputPath =
