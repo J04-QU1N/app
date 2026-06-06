@@ -15,7 +15,12 @@ class CropImageScreen extends StatefulWidget {
 }
 
 class _CropImageScreenState extends State<CropImageScreen> {
+  static const double cropAspectRatio = 3 / 4; // 3 ancho x 4 alto.
+
   final GlobalKey _cropKey = GlobalKey();
+  final TransformationController _transformationController =
+      TransformationController();
+
   bool _isSaving = false;
 
   Future<void> _saveCrop() async {
@@ -62,6 +67,12 @@ class _CropImageScreenState extends State<CropImageScreen> {
   }
 
   @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
@@ -89,48 +100,74 @@ class _CropImageScreenState extends State<CropImageScreen> {
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'Mové y hacé zoom para encuadrar la foto.',
+                'Elegí qué parte de la foto queda dentro del encuadre 3:4. Podés moverla y hacer zoom sin dejar bordes vacíos.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70),
               ),
             ),
             Expanded(
               child: Center(
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: Container(
-                    margin: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                    child: RepaintBoundary(
-                      key: _cropKey,
-                      child: ClipRect(
-                        child: InteractiveViewer(
-                          minScale: 1,
-                          maxScale: 5,
-                          boundaryMargin: const EdgeInsets.all(double.infinity),
-                          child: SizedBox.expand(
-                            child: Image.file(
-                              File(widget.imagePath),
-                              fit: BoxFit.cover,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final double availableWidth = constraints.maxWidth - 32;
+                    final double availableHeight = constraints.maxHeight - 32;
+
+                    double cropWidth = availableWidth;
+                    double cropHeight = cropWidth / cropAspectRatio;
+
+                    if (cropHeight > availableHeight) {
+                      cropHeight = availableHeight;
+                      cropWidth = cropHeight * cropAspectRatio;
+                    }
+
+                    return Container(
+                      width: cropWidth,
+                      height: cropHeight,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black54,
+                            blurRadius: 16,
+                          ),
+                        ],
+                      ),
+                      child: RepaintBoundary(
+                        key: _cropKey,
+                        child: ClipRect(
+                          child: InteractiveViewer(
+                            transformationController:
+                                _transformationController,
+                            minScale: 1,
+                            maxScale: 6,
+                            boundaryMargin: EdgeInsets.zero,
+                            constrained: true,
+                            panEnabled: true,
+                            scaleEnabled: true,
+                            child: SizedBox(
+                              width: cropWidth,
+                              height: cropHeight,
+                              child: Image.file(
+                                File(widget.imagePath),
+                                fit: BoxFit.cover,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: _isSaving ? null : _saveCrop,
-                  icon: const Icon(Icons.crop),
-                  label: const Text('Confirmar encuadre'),
+                  icon: const Icon(Icons.crop_portrait),
+                  label: const Text('Confirmar encuadre 3:4'),
                 ),
               ),
             ),

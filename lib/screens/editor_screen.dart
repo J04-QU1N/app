@@ -1,6 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -22,6 +20,14 @@ class _EditorScreenState extends State<EditorScreen> {
   final List<LashElement> lashes = [];
   int? selectedLashId;
   bool isEditMenuOpen = false;
+  LashEditMode lashEditMode = LashEditMode.move;
+
+  int? _gestureLashId;
+  Offset _gestureStartPosition = Offset.zero;
+  double _gestureStartScale = 1;
+  double _gestureStartRotation = 0;
+  double _gestureStartStretchX = 1;
+  double _gestureStartStretchY = 1;
 
   @override
   void initState() {
@@ -55,18 +61,24 @@ class _EditorScreenState extends State<EditorScreen> {
       selectedImagePath = croppedImagePath;
       selectedLashId = null;
       isEditMenuOpen = false;
+      lashEditMode = LashEditMode.move;
     });
   }
 
   void addLash(String imagePath) {
+    final int id = DateTime.now().microsecondsSinceEpoch;
+
     setState(() {
       lashes.add(
         LashElement(
-          id: DateTime.now().microsecondsSinceEpoch,
+          id: id,
           imagePath: imagePath,
           position: const Offset(90, 220),
         ),
       );
+      selectedLashId = id;
+      isEditMenuOpen = false;
+      lashEditMode = LashEditMode.move;
     });
   }
 
@@ -74,6 +86,7 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {
       selectedLashId = id;
       isEditMenuOpen = false;
+      lashEditMode = LashEditMode.move;
     });
   }
 
@@ -83,17 +96,7 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {
       selectedLashId = null;
       isEditMenuOpen = false;
-    });
-  }
-
-  void moveSelectedLash(int id, DragUpdateDetails details) {
-    final int index = lashes.indexWhere((element) => element.id == id);
-    if (index == -1) return;
-
-    setState(() {
-      lashes[index] = lashes[index].copyWith(
-        position: lashes[index].position + details.delta,
-      );
+      lashEditMode = LashEditMode.move;
     });
   }
 
@@ -105,6 +108,7 @@ class _EditorScreenState extends State<EditorScreen> {
       lashes.removeWhere((element) => element.id == id);
       selectedLashId = null;
       isEditMenuOpen = false;
+      lashEditMode = LashEditMode.move;
     });
   }
 
@@ -121,6 +125,7 @@ class _EditorScreenState extends State<EditorScreen> {
       lashes.add(duplicated);
       selectedLashId = duplicated.id;
       isEditMenuOpen = false;
+      lashEditMode = LashEditMode.move;
     });
   }
 
@@ -145,6 +150,86 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {
       lashes[index] = update(lashes[index]);
     });
+  }
+
+  void startLashGesture(int id, ScaleStartDetails details) {
+    final int index = lashes.indexWhere((element) => element.id == id);
+    if (index == -1) return;
+
+    final LashElement lash = lashes[index];
+
+    setState(() {
+      selectedLashId = id;
+    });
+
+    _gestureLashId = id;
+    _gestureStartPosition = lash.position;
+    _gestureStartScale = lash.scale;
+    _gestureStartRotation = lash.rotation;
+    _gestureStartStretchX = lash.stretchX;
+    _gestureStartStretchY = lash.stretchY;
+  }
+
+  void updateLashGesture(int id, ScaleUpdateDetails details) {
+    if (_gestureLashId != id) return;
+
+    final int index = lashes.indexWhere((element) => element.id == id);
+    if (index == -1) return;
+
+    final LashElement current = lashes[index];
+    LashElement updated;
+
+    switch (lashEditMode) {
+      case LashEditMode.move:
+        updated = current.copyWith(
+          position: current.position + details.focalPointDelta,
+        );
+        break;
+      case LashEditMode.resize:
+        updated = current.copyWith(
+          scale: (_gestureStartScale * details.scale).clamp(0.15, 5).toDouble(),
+        );
+        break;
+      case LashEditMode.rotate:
+        updated = current.copyWith(
+          position: current.position + details.focalPointDelta,
+          rotation: _gestureStartRotation + details.rotation,
+        );
+        break;
+      case LashEditMode.stretch:
+        updated = current.copyWith(
+          stretchX: (_gestureStartStretchX * details.horizontalScale)
+              .clamp(0.25, 4)
+              .toDouble(),
+          stretchY: (_gestureStartStretchY * details.verticalScale)
+              .clamp(0.25, 4)
+              .toDouble(),
+        );
+        break;
+    }
+
+    setState(() {
+      lashes[index] = updated;
+    });
+  }
+
+  void finishLashGesture(int id) {
+    if (_gestureLashId == id) {
+      _gestureLashId = null;
+    }
+  }
+
+  String currentEditModeLabel() {
+    switch (lashEditMode) {
+      case LashEditMode.move:
+        return 'Mover';
+      case LashEditMode.resize:
+        return 'Redimensionar';
+      case LashEditMode.rotate:
+        return 'Rotar';
+      case LashEditMode.stretch:
+        return 'Estirar';
+    }
   }
 
   @override
@@ -173,9 +258,15 @@ class _EditorScreenState extends State<EditorScreen> {
                         (lash) => EditableLashWidget(
                           lash: lash,
                           isSelected: selectedLashId == lash.id,
+                          editMode: selectedLashId == lash.id
+                              ? lashEditMode
+                              : LashEditMode.move,
                           onTap: () => selectLash(lash.id),
-                          onPanUpdate: (details) =>
-                              moveSelectedLash(lash.id, details),
+                          onScaleStart: (details) =>
+                              startLashGesture(lash.id, details),
+                          onScaleUpdate: (details) =>
+                              updateLashGesture(lash.id, details),
+                          onScaleEnd: (_) => finishLashGesture(lash.id),
                         ),
                       ),
                     ],
@@ -252,9 +343,9 @@ class _EditorScreenState extends State<EditorScreen> {
                     Expanded(
                       child: ListView(
                         children: [
-                          buildDraggableItem("assets/lashes/lash1.png"),
-                          buildDraggableItem("assets/lashes/lash2.png"),
-                          buildDraggableItem("assets/lashes/lash3.png"),
+                          buildDraggableItem('assets/lashes/lash1.png'),
+                          buildDraggableItem('assets/lashes/lash2.png'),
+                          buildDraggableItem('assets/lashes/lash3.png'),
                         ],
                       ),
                     )
@@ -313,6 +404,7 @@ class _EditorScreenState extends State<EditorScreen> {
           onPressed: () {
             setState(() {
               isEditMenuOpen = true;
+              lashEditMode = LashEditMode.move;
             });
           },
         ),
@@ -339,51 +431,38 @@ class _EditorScreenState extends State<EditorScreen> {
           onPressed: () {
             setState(() {
               isEditMenuOpen = false;
+              lashEditMode = LashEditMode.move;
             });
           },
         ),
         MenuIconButton(
           icon: Icons.zoom_out_map,
-          label: 'Achicar',
+          label: 'Redimensionar',
+          isSelected: lashEditMode == LashEditMode.resize,
           onPressed: () {
-            updateSelectedLash(
-              (lash) => lash.copyWith(
-                scale: math.max(0.2, lash.scale - 0.1),
-              ),
-            );
-          },
-        ),
-        MenuIconButton(
-          icon: Icons.open_in_full,
-          label: 'Agrandar',
-          onPressed: () {
-            updateSelectedLash(
-              (lash) => lash.copyWith(
-                scale: math.min(4, lash.scale + 0.1),
-              ),
-            );
-          },
-        ),
-        MenuIconButton(
-          icon: Icons.rotate_left,
-          label: 'Rotar -',
-          onPressed: () {
-            updateSelectedLash(
-              (lash) => lash.copyWith(
-                rotation: lash.rotation - 0.12,
-              ),
-            );
+            setState(() {
+              lashEditMode = LashEditMode.resize;
+            });
           },
         ),
         MenuIconButton(
           icon: Icons.rotate_right,
-          label: 'Rotar +',
+          label: 'Rotar',
+          isSelected: lashEditMode == LashEditMode.rotate,
           onPressed: () {
-            updateSelectedLash(
-              (lash) => lash.copyWith(
-                rotation: lash.rotation + 0.12,
-              ),
-            );
+            setState(() {
+              lashEditMode = LashEditMode.rotate;
+            });
+          },
+        ),
+        MenuIconButton(
+          icon: Icons.swap_horiz,
+          label: 'Estirar',
+          isSelected: lashEditMode == LashEditMode.stretch,
+          onPressed: () {
+            setState(() {
+              lashEditMode = LashEditMode.stretch;
+            });
           },
         ),
         MenuIconButton(
@@ -417,12 +496,21 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 }
 
+enum LashEditMode {
+  move,
+  resize,
+  rotate,
+  stretch,
+}
+
 class LashElement {
   final int id;
   final String imagePath;
   final Offset position;
   final double scale;
   final double rotation;
+  final double stretchX;
+  final double stretchY;
   final bool isMirrored;
 
   const LashElement({
@@ -431,6 +519,8 @@ class LashElement {
     required this.position,
     this.scale = 1,
     this.rotation = 0,
+    this.stretchX = 1,
+    this.stretchY = 1,
     this.isMirrored = false,
   });
 
@@ -440,6 +530,8 @@ class LashElement {
     Offset? position,
     double? scale,
     double? rotation,
+    double? stretchX,
+    double? stretchY,
     bool? isMirrored,
   }) {
     return LashElement(
@@ -448,55 +540,103 @@ class LashElement {
       position: position ?? this.position,
       scale: scale ?? this.scale,
       rotation: rotation ?? this.rotation,
+      stretchX: stretchX ?? this.stretchX,
+      stretchY: stretchY ?? this.stretchY,
       isMirrored: isMirrored ?? this.isMirrored,
     );
   }
 }
 
 class EditableLashWidget extends StatelessWidget {
+  static const double baseWidth = 200;
+
   final LashElement lash;
   final bool isSelected;
+  final LashEditMode editMode;
   final VoidCallback onTap;
-  final ValueChanged<DragUpdateDetails> onPanUpdate;
+  final ValueChanged<ScaleStartDetails> onScaleStart;
+  final ValueChanged<ScaleUpdateDetails> onScaleUpdate;
+  final ValueChanged<ScaleEndDetails> onScaleEnd;
 
   const EditableLashWidget({
     super.key,
     required this.lash,
     required this.isSelected,
+    required this.editMode,
     required this.onTap,
-    required this.onPanUpdate,
+    required this.onScaleStart,
+    required this.onScaleUpdate,
+    required this.onScaleEnd,
   });
 
   @override
   Widget build(BuildContext context) {
+    String hintText;
+    switch (editMode) {
+      case LashEditMode.resize:
+        hintText = 'Pellizcá para redimensionar';
+        break;
+      case LashEditMode.rotate:
+        hintText = 'Usá dos dedos para rotar';
+        break;
+      case LashEditMode.stretch:
+        hintText = 'Separá los dedos horizontal o verticalmente';
+        break;
+      case LashEditMode.move:
+        hintText = 'Arrastrá para mover';
+        break;
+    }
+
     return Positioned(
       left: lash.position.dx,
       top: lash.position.dy,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: onTap,
-        onPanStart: (_) => onTap(),
-        onPanUpdate: onPanUpdate,
-        child: Transform.rotate(
-          angle: lash.rotation,
-          child: Transform.scale(
-            scaleX: lash.isMirrored ? -lash.scale : lash.scale,
-            scaleY: lash.scale,
-            child: Container(
-              decoration: isSelected
-                  ? BoxDecoration(
-                      border: Border.all(
-                        color: Colors.white,
-                        width: 2,
-                      ),
-                    )
-                  : null,
-              child: Image.asset(
-                lash.imagePath,
-                width: 200,
+        onScaleStart: onScaleStart,
+        onScaleUpdate: onScaleUpdate,
+        onScaleEnd: onScaleEnd,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Transform.rotate(
+              angle: lash.rotation,
+              child: Transform.scale(
+                scaleX: (lash.isMirrored ? -1 : 1) * lash.scale * lash.stretchX,
+                scaleY: lash.scale * lash.stretchY,
+                child: Container(
+                  decoration: isSelected
+                      ? BoxDecoration(
+                          border: Border.all(
+                            color: Colors.white,
+                            width: 2,
+                          ),
+                        )
+                      : null,
+                  child: Image.asset(
+                    lash.imagePath,
+                    width: baseWidth,
+                  ),
+                ),
               ),
             ),
-          ),
+            if (isSelected)
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  hintText,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -538,17 +678,25 @@ class MenuIconButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final bool isSelected;
 
   const MenuIconButton({
     super.key,
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.isSelected = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(
+      style: TextButton.styleFrom(
+        backgroundColor: isSelected ? Colors.white24 : Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+      ),
       onPressed: onPressed,
       icon: Icon(icon, color: Colors.white),
       label: Text(
