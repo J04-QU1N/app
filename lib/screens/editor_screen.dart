@@ -14,6 +14,8 @@ class EditorScreen extends StatefulWidget {
 }
 
 class _EditorScreenState extends State<EditorScreen> {
+  static const double editorAspectRatio = 3 / 4; // 3 ancho x 4 alto.
+
   bool isPanelOpen = true;
   late String selectedImagePath;
 
@@ -22,17 +24,67 @@ class _EditorScreenState extends State<EditorScreen> {
   bool isEditMenuOpen = false;
   LashEditMode lashEditMode = LashEditMode.move;
 
+  final List<EditorSnapshot> _undoStack = [];
+  final List<EditorSnapshot> _redoStack = [];
+
   int? _gestureLashId;
-  Offset _gestureStartPosition = Offset.zero;
   double _gestureStartScale = 1;
   double _gestureStartRotation = 0;
   double _gestureStartStretchX = 1;
   double _gestureStartStretchY = 1;
+  bool _gestureHistorySaved = false;
 
   @override
   void initState() {
     super.initState();
     selectedImagePath = widget.imagePath;
+  }
+
+  EditorSnapshot _snapshot() {
+    return EditorSnapshot(
+      imagePath: selectedImagePath,
+      lashes: lashes.map((lash) => lash.copyWith()).toList(),
+      selectedLashId: selectedLashId,
+      isEditMenuOpen: isEditMenuOpen,
+      lashEditMode: lashEditMode,
+    );
+  }
+
+  void _restoreSnapshot(EditorSnapshot snapshot) {
+    selectedImagePath = snapshot.imagePath;
+    lashes
+      ..clear()
+      ..addAll(snapshot.lashes.map((lash) => lash.copyWith()));
+    selectedLashId = snapshot.selectedLashId;
+    isEditMenuOpen = snapshot.isEditMenuOpen;
+    lashEditMode = snapshot.lashEditMode;
+  }
+
+  void _saveHistory() {
+    _undoStack.add(_snapshot());
+    _redoStack.clear();
+  }
+
+  void undo() {
+    if (_undoStack.isEmpty) return;
+
+    setState(() {
+      _redoStack.add(_snapshot());
+      _restoreSnapshot(_undoStack.removeLast());
+      _gestureLashId = null;
+      _gestureHistorySaved = false;
+    });
+  }
+
+  void redo() {
+    if (_redoStack.isEmpty) return;
+
+    setState(() {
+      _undoStack.add(_snapshot());
+      _restoreSnapshot(_redoStack.removeLast());
+      _gestureLashId = null;
+      _gestureHistorySaved = false;
+    });
   }
 
   Future<void> replaceImage(ImageSource source) async {
@@ -57,6 +109,8 @@ class _EditorScreenState extends State<EditorScreen> {
     if (croppedImagePath == null) return;
 
     setState(() {
+      _saveHistory();
+
       /// Se reemplaza la imagen base. No se acumulan varias fotos.
       selectedImagePath = croppedImagePath;
       selectedLashId = null;
@@ -69,6 +123,7 @@ class _EditorScreenState extends State<EditorScreen> {
     final int id = DateTime.now().microsecondsSinceEpoch;
 
     setState(() {
+      _saveHistory();
       lashes.add(
         LashElement(
           id: id,
@@ -105,6 +160,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (id == null) return;
 
     setState(() {
+      _saveHistory();
       lashes.removeWhere((element) => element.id == id);
       selectedLashId = null;
       isEditMenuOpen = false;
@@ -122,6 +178,7 @@ class _EditorScreenState extends State<EditorScreen> {
     );
 
     setState(() {
+      _saveHistory();
       lashes.add(duplicated);
       selectedLashId = duplicated.id;
       isEditMenuOpen = false;
@@ -148,6 +205,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (index == -1) return;
 
     setState(() {
+      _saveHistory();
       lashes[index] = update(lashes[index]);
     });
   }
@@ -163,11 +221,17 @@ class _EditorScreenState extends State<EditorScreen> {
     });
 
     _gestureLashId = id;
-    _gestureStartPosition = lash.position;
     _gestureStartScale = lash.scale;
     _gestureStartRotation = lash.rotation;
     _gestureStartStretchX = lash.stretchX;
     _gestureStartStretchY = lash.stretchY;
+    _gestureHistorySaved = false;
+  }
+
+  void _saveGestureHistoryIfNeeded() {
+    if (_gestureHistorySaved) return;
+    _saveHistory();
+    _gestureHistorySaved = true;
   }
 
   void updateLashGesture(int id, ScaleUpdateDetails details) {
@@ -181,29 +245,63 @@ class _EditorScreenState extends State<EditorScreen> {
 
     switch (lashEditMode) {
       case LashEditMode.move:
+        if (details.focalPointDelta == Offset.zero) return;
+        _saveGestureHistoryIfNeeded();
         updated = current.copyWith(
           position: current.position + details.focalPointDelta,
         );
         break;
       case LashEditMode.resize:
+        if ((details.scale - 1).abs() < 0.001) return;
+        _saveGestureHistoryIfNeeded();
         updated = current.copyWith(
           scale: (_gestureStartScale * details.scale).clamp(0.15, 5).toDouble(),
         );
         break;
       case LashEditMode.rotate:
+        if (details.rotation.abs() < 0.001 &&
+            details.focalPointDelta == Offset.zero) {
+          return;
+        }
+        _saveGestureHistoryIfNeeded();
         updated = current.copyWith(
           position: current.position + details.focalPointDelta,
           rotation: _gestureStartRotation + details.rotation,
         );
         break;
       case LashEditMode.stretch:
+        final double horizontalChange = (details.horizontalScale - 1).abs();
+        final double verticalChange = (details.verticalScale - 1).abs();
+
+        if (horizontalChange < 0.001 && verticalChange < 0.001) return;
+        _saveGestureHistoryIfNeeded();
+
+        double nextStretchX = _gestureStartStretchX;
+        double nextStretchY = _gestureStartStretchY;
+
+        /// Si el gesto es claramente horizontal, toca solo X.
+        /// Si es claramente vertical, toca solo Y.
+        /// Si es diagonal, permite modificar ambos ejes.
+        if (horizontalChange > verticalChange * 1.25) {
+          nextStretchX = (_gestureStartStretchX * details.horizontalScale)
+              .clamp(0.25, 4)
+              .toDouble();
+        } else if (verticalChange > horizontalChange * 1.25) {
+          nextStretchY = (_gestureStartStretchY * details.verticalScale)
+              .clamp(0.25, 4)
+              .toDouble();
+        } else {
+          nextStretchX = (_gestureStartStretchX * details.horizontalScale)
+              .clamp(0.25, 4)
+              .toDouble();
+          nextStretchY = (_gestureStartStretchY * details.verticalScale)
+              .clamp(0.25, 4)
+              .toDouble();
+        }
+
         updated = current.copyWith(
-          stretchX: (_gestureStartStretchX * details.horizontalScale)
-              .clamp(0.25, 4)
-              .toDouble(),
-          stretchY: (_gestureStartStretchY * details.verticalScale)
-              .clamp(0.25, 4)
-              .toDouble(),
+          stretchX: nextStretchX,
+          stretchY: nextStretchY,
         );
         break;
     }
@@ -216,6 +314,7 @@ class _EditorScreenState extends State<EditorScreen> {
   void finishLashGesture(int id) {
     if (_gestureLashId == id) {
       _gestureLashId = null;
+      _gestureHistorySaved = false;
     }
   }
 
@@ -235,81 +334,97 @@ class _EditorScreenState extends State<EditorScreen> {
   @override
   Widget build(BuildContext context) {
     final bool hasSelectedLash = selectedLashId != null;
+    final double topPadding = MediaQuery.of(context).padding.top;
 
     return Scaffold(
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
-          /// AREA EDITOR (FOTO SELECCIONADA)
-          Positioned.fill(
-            child: DragTarget<String>(
-              onAccept: addLash,
-              builder: (context, candidateData, rejectedData) {
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: closeBottomMenus,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.file(
-                        File(selectedImagePath),
-                        fit: BoxFit.cover,
-                      ),
-                      ...lashes.map(
-                        (lash) => EditableLashWidget(
-                          lash: lash,
-                          isSelected: selectedLashId == lash.id,
-                          editMode: selectedLashId == lash.id
-                              ? lashEditMode
-                              : LashEditMode.move,
-                          onTap: () => selectLash(lash.id),
-                          onScaleStart: (details) =>
-                              startLashGesture(lash.id, details),
-                          onScaleUpdate: (details) =>
-                              updateLashGesture(lash.id, details),
-                          onScaleEnd: (_) => finishLashGesture(lash.id),
+          /// AREA EDITOR (FOTO ENCUADRADA 3:4)
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: AspectRatio(
+              aspectRatio: editorAspectRatio,
+              child: DragTarget<String>(
+                onAccept: addLash,
+                builder: (context, candidateData, rejectedData) {
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: closeBottomMenus,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      clipBehavior: Clip.none,
+                      children: [
+                        Image.file(
+                          File(selectedImagePath),
+                          fit: BoxFit.cover,
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+                        ...lashes.map(
+                          (lash) => EditableLashWidget(
+                            lash: lash,
+                            isSelected: selectedLashId == lash.id,
+                            editMode: selectedLashId == lash.id
+                                ? lashEditMode
+                                : LashEditMode.move,
+                            onTap: () => selectLash(lash.id),
+                            onScaleStart: (details) =>
+                                startLashGesture(lash.id, details),
+                            onScaleUpdate: (details) =>
+                                updateLashGesture(lash.id, details),
+                            onScaleEnd: (_) => finishLashGesture(lash.id),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+          /// BOTONES DESHACER / REHACER
+          Positioned(
+            left: 12,
+            top: topPadding + 12,
+            child: Row(
+              children: [
+                SmallRoundButton(
+                  tooltip: 'Deshacer',
+                  icon: Icons.undo,
+                  onPressed: _undoStack.isEmpty ? null : undo,
+                ),
+                const SizedBox(width: 10),
+                SmallRoundButton(
+                  tooltip: 'Rehacer',
+                  icon: Icons.redo,
+                  onPressed: _redoStack.isEmpty ? null : redo,
+                ),
+              ],
             ),
           ),
 
           /// BOTONES PARA REEMPLAZAR LA FOTO BASE
           Positioned(
             right: 12,
-            top: MediaQuery.of(context).padding.top + 12,
+            top: topPadding + 12,
             child: Column(
               children: [
-                Material(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(24),
-                  child: IconButton(
-                    tooltip: 'Reemplazar con cámara',
-                    icon: const Icon(
-                      Icons.photo_camera,
-                      color: Colors.white,
-                    ),
-                    onPressed: () {
-                      replaceImage(ImageSource.camera);
-                    },
-                  ),
+                SmallRoundButton(
+                  tooltip: 'Reemplazar con cámara',
+                  icon: Icons.photo_camera,
+                  onPressed: () {
+                    replaceImage(ImageSource.camera);
+                  },
                 ),
                 const SizedBox(height: 10),
-                Material(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(24),
-                  child: IconButton(
-                    tooltip: 'Reemplazar desde galería',
-                    icon: const Icon(
-                      Icons.photo_library,
-                      color: Colors.white,
-                    ),
-                    onPressed: () {
-                      replaceImage(ImageSource.gallery);
-                    },
-                  ),
+                SmallRoundButton(
+                  tooltip: 'Reemplazar desde galería',
+                  icon: Icons.photo_library,
+                  onPressed: () {
+                    replaceImage(ImageSource.gallery);
+                  },
                 ),
               ],
             ),
@@ -359,21 +474,15 @@ class _EditorScreenState extends State<EditorScreen> {
           if (!isPanelOpen)
             Positioned(
               left: 12,
-              top: MediaQuery.of(context).padding.top + 12,
-              child: Material(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(24),
-                child: IconButton(
-                  icon: const Icon(
-                    Icons.menu,
-                    color: Colors.white,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      isPanelOpen = true;
-                    });
-                  },
-                ),
+              top: topPadding + 64,
+              child: SmallRoundButton(
+                tooltip: 'Abrir pestañas',
+                icon: Icons.menu,
+                onPressed: () {
+                  setState(() {
+                    isPanelOpen = true;
+                  });
+                },
               ),
             ),
 
@@ -456,7 +565,7 @@ class _EditorScreenState extends State<EditorScreen> {
           },
         ),
         MenuIconButton(
-          icon: Icons.swap_horiz,
+          icon: Icons.open_in_full,
           label: 'Estirar',
           isSelected: lashEditMode == LashEditMode.stretch,
           onPressed: () {
@@ -472,6 +581,7 @@ class _EditorScreenState extends State<EditorScreen> {
             updateSelectedLash(
               (lash) => lash.copyWith(
                 isMirrored: !lash.isMirrored,
+                rotation: -lash.rotation,
               ),
             );
           },
@@ -501,6 +611,22 @@ enum LashEditMode {
   resize,
   rotate,
   stretch,
+}
+
+class EditorSnapshot {
+  final String imagePath;
+  final List<LashElement> lashes;
+  final int? selectedLashId;
+  final bool isEditMenuOpen;
+  final LashEditMode lashEditMode;
+
+  const EditorSnapshot({
+    required this.imagePath,
+    required this.lashes,
+    required this.selectedLashId,
+    required this.isEditMenuOpen,
+    required this.lashEditMode,
+  });
 }
 
 class LashElement {
@@ -580,12 +706,38 @@ class EditableLashWidget extends StatelessWidget {
         hintText = 'Usá dos dedos para rotar';
         break;
       case LashEditMode.stretch:
-        hintText = 'Separá los dedos horizontal o verticalmente';
+        hintText = 'Separá horizontal, vertical o diagonal';
         break;
       case LashEditMode.move:
         hintText = 'Arrastrá para mover';
         break;
     }
+
+    final Widget lashImage = SizedBox(
+      width: baseWidth,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Image.asset(
+            lash.imagePath,
+            width: baseWidth,
+          ),
+          if (isSelected)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Colors.white,
+                      width: 2,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
 
     return Positioned(
       left: lash.position.dx,
@@ -596,48 +748,70 @@ class EditableLashWidget extends StatelessWidget {
         onScaleStart: onScaleStart,
         onScaleUpdate: onScaleUpdate,
         onScaleEnd: onScaleEnd,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
             Transform.rotate(
               angle: lash.rotation,
               child: Transform.scale(
                 scaleX: (lash.isMirrored ? -1 : 1) * lash.scale * lash.stretchX,
                 scaleY: lash.scale * lash.stretchY,
-                child: Container(
-                  decoration: isSelected
-                      ? BoxDecoration(
-                          border: Border.all(
-                            color: Colors.white,
-                            width: 2,
-                          ),
-                        )
-                      : null,
-                  child: Image.asset(
-                    lash.imagePath,
-                    width: baseWidth,
-                  ),
-                ),
+                child: lashImage,
               ),
             ),
             if (isSelected)
-              Container(
-                margin: const EdgeInsets.only(top: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  hintText,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
+              Positioned(
+                left: 0,
+                top: 70,
+                child: IgnorePointer(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      hintText,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                      ),
+                    ),
                   ),
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class SmallRoundButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  const SmallRoundButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: onPressed == null ? Colors.black38 : Colors.black87,
+      borderRadius: BorderRadius.circular(24),
+      child: IconButton(
+        tooltip: tooltip,
+        icon: Icon(
+          icon,
+          color: onPressed == null ? Colors.white38 : Colors.white,
+        ),
+        onPressed: onPressed,
       ),
     );
   }

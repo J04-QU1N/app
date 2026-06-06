@@ -22,6 +22,27 @@ class _CropImageScreenState extends State<CropImageScreen> {
       TransformationController();
 
   bool _isSaving = false;
+  ui.Size? _imageSize;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImageSize();
+  }
+
+  Future<void> _loadImageSize() async {
+    final Uint8List bytes = await File(widget.imagePath).readAsBytes();
+    final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+    final ui.FrameInfo frame = await codec.getNextFrame();
+
+    if (!mounted) return;
+    setState(() {
+      _imageSize = ui.Size(
+        frame.image.width.toDouble(),
+        frame.image.height.toDouble(),
+      );
+    });
+  }
 
   Future<void> _saveCrop() async {
     if (_isSaving) return;
@@ -82,7 +103,7 @@ class _CropImageScreenState extends State<CropImageScreen> {
         title: const Text('Encuadrar foto'),
         actions: [
           TextButton.icon(
-            onPressed: _isSaving ? null : _saveCrop,
+            onPressed: _isSaving || _imageSize == null ? null : _saveCrop,
             icon: _isSaving
                 ? const SizedBox(
                     width: 18,
@@ -100,7 +121,7 @@ class _CropImageScreenState extends State<CropImageScreen> {
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'Elegí qué parte de la foto queda dentro del encuadre 3:4. Podés moverla y hacer zoom sin dejar bordes vacíos.',
+                'La foto mantiene su proporción original. Movela y hacé zoom para elegir qué parte queda dentro del encuadre vertical 3:4.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70),
               ),
@@ -118,6 +139,29 @@ class _CropImageScreenState extends State<CropImageScreen> {
                     if (cropHeight > availableHeight) {
                       cropHeight = availableHeight;
                       cropWidth = cropHeight * cropAspectRatio;
+                    }
+
+                    if (_imageSize == null) {
+                      return SizedBox(
+                        width: cropWidth,
+                        height: cropHeight,
+                        child: const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+                    }
+
+                    final double imageAspectRatio =
+                        _imageSize!.width / _imageSize!.height;
+
+                    /// Tamaño base de la foto: cubre completamente el marco 3:4,
+                    /// pero mantiene la proporción real de la imagen original.
+                    double imageWidth = cropWidth;
+                    double imageHeight = imageWidth / imageAspectRatio;
+
+                    if (imageHeight < cropHeight) {
+                      imageHeight = cropHeight;
+                      imageWidth = imageHeight * imageAspectRatio;
                     }
 
                     return Container(
@@ -141,15 +185,16 @@ class _CropImageScreenState extends State<CropImageScreen> {
                             minScale: 1,
                             maxScale: 6,
                             boundaryMargin: EdgeInsets.zero,
-                            constrained: true,
+                            constrained: false,
                             panEnabled: true,
                             scaleEnabled: true,
+                            alignment: Alignment.center,
                             child: SizedBox(
-                              width: cropWidth,
-                              height: cropHeight,
+                              width: imageWidth,
+                              height: imageHeight,
                               child: Image.file(
                                 File(widget.imagePath),
-                                fit: BoxFit.cover,
+                                fit: BoxFit.fill,
                               ),
                             ),
                           ),
@@ -165,7 +210,7 @@ class _CropImageScreenState extends State<CropImageScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: _isSaving ? null : _saveCrop,
+                  onPressed: _isSaving || _imageSize == null ? null : _saveCrop,
                   icon: const Icon(Icons.crop_portrait),
                   label: const Text('Confirmar encuadre 3:4'),
                 ),
