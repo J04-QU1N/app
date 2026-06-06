@@ -10,6 +10,13 @@ import 'package:image_picker/image_picker.dart';
 import 'crop_image_screen.dart';
 import 'saved_image_store.dart';
 
+class AppColors {
+  static const Color background = Color(0xFFFAD8CE);
+  static const Color button = Color(0xFFDB9184);
+  static const Color buttonDark = Color(0xFFC77F73);
+  static const Color onButton = Colors.white;
+}
+
 class EditorScreen extends StatefulWidget {
   final String imagePath;
 
@@ -40,6 +47,8 @@ class _EditorScreenState extends State<EditorScreen> {
   int? _gestureLashId;
   double _gestureStartRotation = 0;
   bool _gestureHistorySaved = false;
+  double _rotationDragStartPointerAngle = 0;
+  double _rotationDragStartLashRotation = 0;
 
   @override
   void initState() {
@@ -119,7 +128,7 @@ class _EditorScreenState extends State<EditorScreen> {
   Future<void> showReplaceImageOptions() async {
     final ImageSource? source = await showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: Colors.black87,
+      backgroundColor: AppColors.buttonDark,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -459,13 +468,68 @@ class _EditorScreenState extends State<EditorScreen> {
     _gestureHistorySaved = false;
   }
 
+
+  double _pointerAngleAroundSelectedLash(Offset globalPosition, LashElement lash) {
+    final RenderBox? editorBox = _editorCaptureKey.currentContext?.findRenderObject() as RenderBox?;
+    if (editorBox == null) return lash.rotation;
+    final Offset localPointer = editorBox.globalToLocal(globalPosition);
+    final Offset delta = localPointer - lash.position;
+    return math.atan2(delta.dy, delta.dx);
+  }
+
+  void startLashRotationHandle(int id, DragStartDetails details) {
+    final int index = lashes.indexWhere((element) => element.id == id);
+    if (index == -1) return;
+
+    final LashElement lash = lashes[index];
+    setState(() {
+      selectedLashId = id;
+      isEditMenuOpen = true;
+      lashEditMode = LashEditMode.rotate;
+    });
+    _gestureLashId = id;
+    _gestureHistorySaved = false;
+    _rotationDragStartLashRotation = lash.rotation;
+    _rotationDragStartPointerAngle = _pointerAngleAroundSelectedLash(
+      details.globalPosition,
+      lash,
+    );
+  }
+
+  void updateLashRotationHandle(int id, DragUpdateDetails details) {
+    if (_gestureLashId != id) return;
+    final int index = lashes.indexWhere((element) => element.id == id);
+    if (index == -1) return;
+
+    _saveGestureHistoryIfNeeded();
+    final LashElement lash = lashes[index];
+    final double currentPointerAngle = _pointerAngleAroundSelectedLash(
+      details.globalPosition,
+      lash,
+    );
+    final double delta = currentPointerAngle - _rotationDragStartPointerAngle;
+
+    setState(() {
+      lashes[index] = lash.copyWith(
+        rotation: _rotationDragStartLashRotation + delta,
+      );
+    });
+  }
+
+  void finishLashRotationHandle(int id) {
+    if (_gestureLashId == id) {
+      _gestureLashId = null;
+      _gestureHistorySaved = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool hasSelectedLash = selectedLashId != null;
     final double topPadding = MediaQuery.of(context).padding.top;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.background,
       body: Stack(
         children: [
           Positioned.fill(
@@ -505,6 +569,11 @@ class _EditorScreenState extends State<EditorScreen> {
                                 onHandleDrag: (handle, details) =>
                                     updateLashHandleDrag(lash.id, handle, details),
                                 onHandleDragEnd: finishHandleDrag,
+                                onRotateHandleStart: (details) =>
+                                    startLashRotationHandle(lash.id, details),
+                                onRotateHandleDrag: (details) =>
+                                    updateLashRotationHandle(lash.id, details),
+                                onRotateHandleEnd: () => finishLashRotationHandle(lash.id),
                               ),
                             ),
                           ],
@@ -549,7 +618,7 @@ class _EditorScreenState extends State<EditorScreen> {
             bottom: 0,
             child: Container(
               width: 120,
-              color: Colors.black87,
+              color: AppColors.buttonDark,
               child: SafeArea(
                 child: Column(
                   children: [
@@ -787,6 +856,9 @@ class EditableLashWidget extends StatelessWidget {
   final ValueChanged<ScaleEndDetails> onScaleEnd;
   final void Function(LashResizeHandle handle, DragUpdateDetails details) onHandleDrag;
   final VoidCallback onHandleDragEnd;
+  final ValueChanged<DragStartDetails> onRotateHandleStart;
+  final ValueChanged<DragUpdateDetails> onRotateHandleDrag;
+  final VoidCallback onRotateHandleEnd;
 
   const EditableLashWidget({
     super.key,
@@ -799,13 +871,16 @@ class EditableLashWidget extends StatelessWidget {
     required this.onScaleEnd,
     required this.onHandleDrag,
     required this.onHandleDragEnd,
+    required this.onRotateHandleStart,
+    required this.onRotateHandleDrag,
+    required this.onRotateHandleEnd,
   });
 
   @override
   Widget build(BuildContext context) {
     final String hintText = switch (editMode) {
       LashEditMode.resize => 'Arrastrá los puntos para ajustar',
-      LashEditMode.rotate => 'Usá dos dedos para rotar',
+      LashEditMode.rotate => 'Arrastrá el botón de rotar',
       LashEditMode.move => 'Arrastrá para mover',
     };
 
@@ -873,6 +948,12 @@ class EditableLashWidget extends StatelessWidget {
               width: transformedWidth,
               height: transformedHeight,
             ),
+          if (isSelected && editMode == LashEditMode.rotate)
+            _buildRotateHandle(
+              elementCenter: elementCenter,
+              width: transformedWidth,
+              height: transformedHeight,
+            ),
           if (isSelected)
             Positioned(
               left: 0,
@@ -883,7 +964,7 @@ class EditableLashWidget extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.black87,
+                      color: AppColors.buttonDark,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
@@ -895,6 +976,32 @@ class EditableLashWidget extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRotateHandle({
+    required Offset elementCenter,
+    required double width,
+    required double height,
+  }) {
+    final double cosR = math.cos(lash.rotation);
+    final double sinR = math.sin(lash.rotation);
+    final Offset localPoint = Offset(width / 2, -height / 2);
+    final Offset point = Offset(
+      elementCenter.dx + localPoint.dx * cosR - localPoint.dy * sinR,
+      elementCenter.dy + localPoint.dx * sinR + localPoint.dy * cosR,
+    );
+
+    const double size = 40;
+    return Positioned(
+      left: point.dx - size / 2,
+      top: point.dy - size / 2,
+      child: _RotateHandle(
+        size: size,
+        onPanStart: onRotateHandleStart,
+        onPanUpdate: onRotateHandleDrag,
+        onPanEnd: onRotateHandleEnd,
       ),
     );
   }
@@ -966,6 +1073,47 @@ class EditableLashWidget extends StatelessWidget {
   }
 }
 
+
+class _RotateHandle extends StatelessWidget {
+  final double size;
+  final ValueChanged<DragStartDetails> onPanStart;
+  final ValueChanged<DragUpdateDetails> onPanUpdate;
+  final VoidCallback onPanEnd;
+
+  const _RotateHandle({
+    required this.size,
+    required this.onPanStart,
+    required this.onPanUpdate,
+    required this.onPanEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: onPanStart,
+      onPanUpdate: onPanUpdate,
+      onPanEnd: (_) => onPanEnd(),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.button,
+          shape: BoxShape.circle,
+          border: Border.all(color: AppColors.buttonDark, width: 2),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black38,
+              blurRadius: 5,
+            ),
+          ],
+        ),
+        child: const Icon(Icons.rotate_right, color: Colors.white, size: 22),
+      ),
+    );
+  }
+}
+
 class _Handle extends StatelessWidget {
   final double size;
   final IconData icon;
@@ -991,9 +1139,9 @@ class _Handle extends StatelessWidget {
         width: size,
         height: size,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.background,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.black, width: 2),
+          border: Border.all(color: AppColors.button, width: 2),
           boxShadow: const [
             BoxShadow(
               color: Colors.black45,
@@ -1001,7 +1149,7 @@ class _Handle extends StatelessWidget {
             ),
           ],
         ),
-        child: Icon(icon, color: Colors.black, size: isCorner ? 18 : 15),
+        child: Icon(icon, color: AppColors.buttonDark, size: isCorner ? 18 : 15),
       ),
     );
   }
@@ -1022,7 +1170,7 @@ class LabeledTopButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: onPressed == null ? Colors.black38 : Colors.black87,
+      color: onPressed == null ? AppColors.button.withOpacity(0.45) : AppColors.button,
       borderRadius: BorderRadius.circular(22),
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
@@ -1057,7 +1205,7 @@ class BottomEditorMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.black87,
+      color: AppColors.buttonDark,
       borderRadius: BorderRadius.circular(20),
       child: SizedBox(
         height: 54,
@@ -1096,7 +1244,7 @@ class MenuIconButton extends StatelessWidget {
     final Color foreground = onPressed == null ? Colors.white38 : Colors.white;
 
     return Material(
-      color: isSelected ? Colors.white24 : Colors.transparent,
+      color: isSelected ? AppColors.buttonDark : Colors.transparent,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),

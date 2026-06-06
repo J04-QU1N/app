@@ -123,10 +123,10 @@ class _CropImageScreenState extends State<CropImageScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFFFAD8CE),
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
+        backgroundColor: const Color(0xFFFAD8CE),
+        foregroundColor: const Color(0xFFDB9184),
         title: const Text('Encuadrar foto'),
         actions: [
           TextButton.icon(
@@ -150,7 +150,7 @@ class _CropImageScreenState extends State<CropImageScreen> {
               child: Text(
                 'Mové la foto y hacé zoom para elegir qué parte queda dentro del encuadre vertical 3:4.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70),
+                style: TextStyle(color: Color(0xFFDB9184)),
               ),
             ),
             Expanded(
@@ -202,7 +202,7 @@ class _CropImageScreenState extends State<CropImageScreen> {
                       width: cropWidth,
                       height: cropHeight,
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 2),
+                        border: Border.all(color: Color(0xFFDB9184), width: 2),
                         boxShadow: const [
                           BoxShadow(
                             color: Colors.black54,
@@ -237,7 +237,7 @@ class _CropImageScreenState extends State<CropImageScreen> {
                               });
                             },
                             child: Container(
-                              color: Colors.black,
+                              color: const Color(0xFFFAD8CE),
                               child: Center(
                                 child: Transform.translate(
                                   offset: _offset,
@@ -268,6 +268,12 @@ class _CropImageScreenState extends State<CropImageScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFDB9184),
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFFC77F73), width: 1.4),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
                   onPressed: _isSaving || _imageSize == null ? null : _saveCrop,
                   icon: const Icon(Icons.crop_portrait),
                   label: const Text('Confirmar encuadre 3:4'),

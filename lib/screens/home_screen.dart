@@ -51,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> showImageOptions() async {
     final ImageSource? source = await showModalBottomSheet<ImageSource>(
       context: context,
-      backgroundColor: Colors.black87,
+      backgroundColor: AppColors.buttonDark,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -107,7 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
       future: _loadSavedHistoryFuture,
       builder: (context, snapshot) {
         return Scaffold(
-          backgroundColor: Colors.black,
+          backgroundColor: AppColors.background,
           body: SafeArea(
             child: Center(
               child: Padding(
@@ -115,18 +115,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text(
-                      'LashVision',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 34,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Image.asset(
+                      'assets/brand/logo_home.png',
+                      width: 240,
+                      fit: BoxFit.contain,
                     ),
                     const SizedBox(height: 60),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.button,
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: AppColors.buttonDark, width: 1.4),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
                         onPressed: showImageOptions,
                         icon: const Icon(Icons.add_photo_alternate),
                         label: const Text('Nueva imagen'),
@@ -136,6 +139,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.buttonDark,
+                          side: const BorderSide(color: AppColors.buttonDark, width: 1.4),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
                         onPressed: showSavedHistory,
                         icon: const Icon(Icons.history),
                         label: Text('Historial guardado (${SavedImageStore.items.length})'),
@@ -163,17 +171,17 @@ class SavedHistoryScreen extends StatelessWidget {
         final List<SavedEditedImage> items = SavedImageStore.items;
 
         return Scaffold(
-          backgroundColor: Colors.black,
+          backgroundColor: AppColors.background,
           appBar: AppBar(
-            backgroundColor: Colors.black,
-            foregroundColor: Colors.white,
+            backgroundColor: AppColors.background,
+            foregroundColor: AppColors.buttonDark,
             title: const Text('Historial guardado'),
           ),
           body: items.isEmpty
               ? const Center(
                   child: Text(
                     'Todavía no guardaste imágenes.',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(color: AppColors.buttonDark),
                   ),
                 )
               : ListView.separated(
@@ -183,7 +191,7 @@ class SavedHistoryScreen extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final SavedEditedImage item = items[index];
                     return Card(
-                      color: Colors.white10,
+                      color: AppColors.button.withOpacity(0.22),
                       child: ListTile(
                         leading: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
@@ -199,12 +207,12 @@ class SavedHistoryScreen extends StatelessWidget {
                             ),
                           ),
                         ),
-                        title: Text(item.label, style: const TextStyle(color: Colors.white)),
+                        title: Text(item.label, style: const TextStyle(color: AppColors.buttonDark)),
                         subtitle: Text(
                           item.path,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white54),
+                          style: const TextStyle(color: AppColors.buttonDark),
                         ),
                         onTap: () {
                           Navigator.push(
