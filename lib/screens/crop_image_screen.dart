@@ -18,11 +18,14 @@ class _CropImageScreenState extends State<CropImageScreen> {
   static const double cropAspectRatio = 3 / 4; // 3 ancho x 4 alto.
 
   final GlobalKey _cropKey = GlobalKey();
-  final TransformationController _transformationController =
-      TransformationController();
 
   bool _isSaving = false;
   ui.Size? _imageSize;
+
+  double _scale = 1;
+  double _startScale = 1;
+  Offset _offset = Offset.zero;
+  Offset _startOffset = Offset.zero;
 
   @override
   void initState() {
@@ -41,6 +44,10 @@ class _CropImageScreenState extends State<CropImageScreen> {
         frame.image.width.toDouble(),
         frame.image.height.toDouble(),
       );
+      _scale = 1;
+      _startScale = 1;
+      _offset = Offset.zero;
+      _startOffset = Offset.zero;
     });
   }
 
@@ -87,10 +94,24 @@ class _CropImageScreenState extends State<CropImageScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _transformationController.dispose();
-    super.dispose();
+  Offset _clampOffset({
+    required Offset offset,
+    required double scale,
+    required double cropWidth,
+    required double cropHeight,
+    required double imageWidth,
+    required double imageHeight,
+  }) {
+    final double scaledWidth = imageWidth * scale;
+    final double scaledHeight = imageHeight * scale;
+
+    final double maxX = ((scaledWidth - cropWidth) / 2).clamp(0, double.infinity).toDouble();
+    final double maxY = ((scaledHeight - cropHeight) / 2).clamp(0, double.infinity).toDouble();
+
+    return Offset(
+      offset.dx.clamp(-maxX, maxX).toDouble(),
+      offset.dy.clamp(-maxY, maxY).toDouble(),
+    );
   }
 
   @override
@@ -119,9 +140,9 @@ class _CropImageScreenState extends State<CropImageScreen> {
         child: Column(
           children: [
             const Padding(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Text(
-                'La foto mantiene su proporción original. Movela y hacé zoom para elegir qué parte queda dentro del encuadre vertical 3:4.',
+                'Mové la foto y hacé zoom para elegir qué parte queda dentro del encuadre vertical 3:4.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white70),
               ),
@@ -154,8 +175,6 @@ class _CropImageScreenState extends State<CropImageScreen> {
                     final double imageAspectRatio =
                         _imageSize!.width / _imageSize!.height;
 
-                    /// Tamaño base de la foto: cubre completamente el marco 3:4,
-                    /// pero mantiene la proporción real de la imagen original.
                     double imageWidth = cropWidth;
                     double imageHeight = imageWidth / imageAspectRatio;
 
@@ -163,6 +182,15 @@ class _CropImageScreenState extends State<CropImageScreen> {
                       imageHeight = cropHeight;
                       imageWidth = imageHeight * imageAspectRatio;
                     }
+
+                    _offset = _clampOffset(
+                      offset: _offset,
+                      scale: _scale,
+                      cropWidth: cropWidth,
+                      cropHeight: cropHeight,
+                      imageWidth: imageWidth,
+                      imageHeight: imageHeight,
+                    );
 
                     return Container(
                       width: cropWidth,
@@ -179,22 +207,46 @@ class _CropImageScreenState extends State<CropImageScreen> {
                       child: RepaintBoundary(
                         key: _cropKey,
                         child: ClipRect(
-                          child: InteractiveViewer(
-                            transformationController:
-                                _transformationController,
-                            minScale: 1,
-                            maxScale: 6,
-                            boundaryMargin: EdgeInsets.zero,
-                            constrained: false,
-                            panEnabled: true,
-                            scaleEnabled: true,
-                            alignment: Alignment.center,
-                            child: SizedBox(
-                              width: imageWidth,
-                              height: imageHeight,
-                              child: Image.file(
-                                File(widget.imagePath),
-                                fit: BoxFit.fill,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onScaleStart: (_) {
+                              _startScale = _scale;
+                              _startOffset = _offset;
+                            },
+                            onScaleUpdate: (details) {
+                              final double nextScale =
+                                  (_startScale * details.scale).clamp(1.0, 6.0).toDouble();
+                              final Offset nextOffset = _clampOffset(
+                                offset: _offset + details.focalPointDelta,
+                                scale: nextScale,
+                                cropWidth: cropWidth,
+                                cropHeight: cropHeight,
+                                imageWidth: imageWidth,
+                                imageHeight: imageHeight,
+                              );
+
+                              setState(() {
+                                _scale = nextScale;
+                                _offset = nextOffset;
+                              });
+                            },
+                            child: Container(
+                              color: Colors.black,
+                              child: Center(
+                                child: Transform.translate(
+                                  offset: _offset,
+                                  child: Transform.scale(
+                                    scale: _scale,
+                                    child: SizedBox(
+                                      width: imageWidth,
+                                      height: imageHeight,
+                                      child: Image.file(
+                                        File(widget.imagePath),
+                                        fit: BoxFit.fill,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),

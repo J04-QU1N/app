@@ -1,8 +1,12 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'crop_image_screen.dart';
+import 'saved_image_store.dart';
 
 class EditorScreen extends StatefulWidget {
   final String imagePath;
@@ -15,6 +19,8 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   static const double editorAspectRatio = 3 / 4; // 3 ancho x 4 alto.
+
+  final GlobalKey _editorCaptureKey = GlobalKey();
 
   bool isPanelOpen = true;
   late String selectedImagePath;
@@ -33,6 +39,7 @@ class _EditorScreenState extends State<EditorScreen> {
   double _gestureStartStretchX = 1;
   double _gestureStartStretchY = 1;
   bool _gestureHistorySaved = false;
+  StretchAxis? _activeStretchAxis;
 
   @override
   void initState() {
@@ -73,6 +80,7 @@ class _EditorScreenState extends State<EditorScreen> {
       _restoreSnapshot(_undoStack.removeLast());
       _gestureLashId = null;
       _gestureHistorySaved = false;
+      _activeStretchAxis = null;
     });
   }
 
@@ -84,6 +92,7 @@ class _EditorScreenState extends State<EditorScreen> {
       _restoreSnapshot(_redoStack.removeLast());
       _gestureLashId = null;
       _gestureHistorySaved = false;
+      _activeStretchAxis = null;
     });
   }
 
@@ -117,6 +126,137 @@ class _EditorScreenState extends State<EditorScreen> {
       isEditMenuOpen = false;
       lashEditMode = LashEditMode.move;
     });
+  }
+
+
+  Future<void> showReplaceImageOptions() async {
+    final ImageSource? source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.black87,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Cambiar imagen',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  leading: const Icon(Icons.photo_camera, color: Colors.white),
+                  title: const Text('Cámara', style: TextStyle(color: Colors.white)),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library, color: Colors.white),
+                  title: const Text('Galería', style: TextStyle(color: Colors.white)),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (source == null) return;
+    await replaceImage(source);
+  }
+
+  Future<Directory> _getSaveDirectory() async {
+    final Directory androidDownloads = Directory('/storage/emulated/0/Download');
+
+    if (await androidDownloads.exists()) {
+      return androidDownloads;
+    }
+
+    return Directory.systemTemp;
+  }
+
+  Future<void> saveEditedImage() async {
+    final TextEditingController controller = TextEditingController();
+
+    final String? label = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Guardar imagen'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Nombre o etiqueta',
+              hintText: 'Ej: Cliente 01',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final String value = controller.text.trim();
+                if (value.isEmpty) return;
+                Navigator.pop(context, value);
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (label == null || label.trim().isEmpty) return;
+
+    try {
+      final RenderRepaintBoundary boundary = _editorCaptureKey.currentContext!
+          .findRenderObject()! as RenderRepaintBoundary;
+      final ui.Image image = await boundary.toImage(pixelRatio: 3);
+      final ByteData? byteData = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+
+      if (byteData == null) return;
+
+      final Uint8List bytes = byteData.buffer.asUint8List();
+      final String safeLabel = label.replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_');
+      final Directory saveDirectory = await _getSaveDirectory();
+      final String outputPath =
+          '${saveDirectory.path}/lashvision_${safeLabel}_${DateTime.now().millisecondsSinceEpoch}.png';
+
+      await File(outputPath).writeAsBytes(bytes);
+
+      SavedImageStore.add(
+        SavedEditedImage(
+          label: label,
+          path: outputPath,
+          createdAt: DateTime.now(),
+        ),
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imagen guardada como "$label"')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo guardar la imagen.')),
+      );
+    }
   }
 
   void addLash(String imagePath) {
@@ -226,6 +366,7 @@ class _EditorScreenState extends State<EditorScreen> {
     _gestureStartStretchX = lash.stretchX;
     _gestureStartStretchY = lash.stretchY;
     _gestureHistorySaved = false;
+    _activeStretchAxis = null;
   }
 
   void _saveGestureHistoryIfNeeded() {
@@ -274,26 +415,24 @@ class _EditorScreenState extends State<EditorScreen> {
         final double verticalChange = (details.verticalScale - 1).abs();
 
         if (horizontalChange < 0.001 && verticalChange < 0.001) return;
+
+        _activeStretchAxis ??= horizontalChange >= verticalChange
+            ? StretchAxis.horizontal
+            : StretchAxis.vertical;
+
         _saveGestureHistoryIfNeeded();
 
         double nextStretchX = _gestureStartStretchX;
         double nextStretchY = _gestureStartStretchY;
 
-        /// Si el gesto es claramente horizontal, toca solo X.
-        /// Si es claramente vertical, toca solo Y.
-        /// Si es diagonal, permite modificar ambos ejes.
-        if (horizontalChange > verticalChange * 1.25) {
+        /// Bloquea un solo eje por gesto para evitar saltos raros.
+        /// Si empezás separando los dedos horizontalmente, solo toca X.
+        /// Si empezás separándolos verticalmente, solo toca Y.
+        if (_activeStretchAxis == StretchAxis.horizontal) {
           nextStretchX = (_gestureStartStretchX * details.horizontalScale)
-              .clamp(0.25, 4)
-              .toDouble();
-        } else if (verticalChange > horizontalChange * 1.25) {
-          nextStretchY = (_gestureStartStretchY * details.verticalScale)
               .clamp(0.25, 4)
               .toDouble();
         } else {
-          nextStretchX = (_gestureStartStretchX * details.horizontalScale)
-              .clamp(0.25, 4)
-              .toDouble();
           nextStretchY = (_gestureStartStretchY * details.verticalScale)
               .clamp(0.25, 4)
               .toDouble();
@@ -315,6 +454,7 @@ class _EditorScreenState extends State<EditorScreen> {
     if (_gestureLashId == id) {
       _gestureLashId = null;
       _gestureHistorySaved = false;
+      _activeStretchAxis = null;
     }
   }
 
@@ -344,89 +484,57 @@ class _EditorScreenState extends State<EditorScreen> {
           Positioned(
             left: 0,
             right: 0,
-            top: 0,
+            top: topPadding + 24,
             child: AspectRatio(
               aspectRatio: editorAspectRatio,
-              child: DragTarget<String>(
-                onAccept: addLash,
-                builder: (context, candidateData, rejectedData) {
-                  return GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: closeBottomMenus,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      clipBehavior: Clip.none,
-                      children: [
-                        Image.file(
-                          File(selectedImagePath),
-                          fit: BoxFit.cover,
-                        ),
-                        ...lashes.map(
-                          (lash) => EditableLashWidget(
-                            lash: lash,
-                            isSelected: selectedLashId == lash.id,
-                            editMode: selectedLashId == lash.id
-                                ? lashEditMode
-                                : LashEditMode.move,
-                            onTap: () => selectLash(lash.id),
-                            onScaleStart: (details) =>
-                                startLashGesture(lash.id, details),
-                            onScaleUpdate: (details) =>
-                                updateLashGesture(lash.id, details),
-                            onScaleEnd: (_) => finishLashGesture(lash.id),
+              child: RepaintBoundary(
+                key: _editorCaptureKey,
+                child: DragTarget<String>(
+                  onAccept: addLash,
+                  builder: (context, candidateData, rejectedData) {
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: closeBottomMenus,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        clipBehavior: Clip.none,
+                        children: [
+                          Image.file(
+                            File(selectedImagePath),
+                            fit: BoxFit.fill,
                           ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                          ...lashes.map(
+                            (lash) => EditableLashWidget(
+                              lash: lash,
+                              isSelected: selectedLashId == lash.id,
+                              editMode: selectedLashId == lash.id
+                                  ? lashEditMode
+                                  : LashEditMode.move,
+                              onTap: () => selectLash(lash.id),
+                              onScaleStart: (details) =>
+                                  startLashGesture(lash.id, details),
+                              onScaleUpdate: (details) =>
+                                  updateLashGesture(lash.id, details),
+                              onScaleEnd: (_) => finishLashGesture(lash.id),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ),
 
-          /// BOTONES DESHACER / REHACER
-          Positioned(
-            left: 12,
-            top: topPadding + 12,
-            child: Row(
-              children: [
-                SmallRoundButton(
-                  tooltip: 'Deshacer',
-                  icon: Icons.undo,
-                  onPressed: _undoStack.isEmpty ? null : undo,
-                ),
-                const SizedBox(width: 10),
-                SmallRoundButton(
-                  tooltip: 'Rehacer',
-                  icon: Icons.redo,
-                  onPressed: _redoStack.isEmpty ? null : redo,
-                ),
-              ],
-            ),
-          ),
-
-          /// BOTONES PARA REEMPLAZAR LA FOTO BASE
+          /// BOTON GUARDAR, RESPETANDO NOTCH/BARRA SUPERIOR
           Positioned(
             right: 12,
-            top: topPadding + 12,
-            child: Column(
-              children: [
-                SmallRoundButton(
-                  tooltip: 'Reemplazar con cámara',
-                  icon: Icons.photo_camera,
-                  onPressed: () {
-                    replaceImage(ImageSource.camera);
-                  },
-                ),
-                const SizedBox(height: 10),
-                SmallRoundButton(
-                  tooltip: 'Reemplazar desde galería',
-                  icon: Icons.photo_library,
-                  onPressed: () {
-                    replaceImage(ImageSource.gallery);
-                  },
-                ),
-              ],
+            top: topPadding + 8,
+            child: SmallRoundButton(
+              tooltip: 'Guardar imagen',
+              icon: Icons.save,
+              onPressed: saveEditedImage,
             ),
           ),
 
@@ -485,6 +593,35 @@ class _EditorScreenState extends State<EditorScreen> {
                 },
               ),
             ),
+
+          /// ACCIONES INFERIORES PRINCIPALES
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: hasSelectedLash ? 92 : 0,
+            child: SafeArea(
+              minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: BottomEditorMenu(
+                children: [
+                  MenuIconButton(
+                    icon: Icons.undo,
+                    label: 'Deshacer',
+                    onPressed: _undoStack.isEmpty ? null : undo,
+                  ),
+                  MenuIconButton(
+                    icon: Icons.redo,
+                    label: 'Rehacer',
+                    onPressed: _redoStack.isEmpty ? null : redo,
+                  ),
+                  MenuIconButton(
+                    icon: Icons.photo_camera_back,
+                    label: 'Imagen',
+                    onPressed: showReplaceImageOptions,
+                  ),
+                ],
+              ),
+            ),
+          ),
 
           /// MENU INFERIOR DEL ELEMENTO SELECCIONADO
           if (hasSelectedLash)
@@ -613,6 +750,11 @@ enum LashEditMode {
   stretch,
 }
 
+enum StretchAxis {
+  horizontal,
+  vertical,
+}
+
 class EditorSnapshot {
   final String imagePath;
   final List<LashElement> lashes;
@@ -706,7 +848,7 @@ class EditableLashWidget extends StatelessWidget {
         hintText = 'Usá dos dedos para rotar';
         break;
       case LashEditMode.stretch:
-        hintText = 'Separá horizontal, vertical o diagonal';
+        hintText = 'Separá en horizontal o vertical';
         break;
       case LashEditMode.move:
         hintText = 'Arrastrá para mover';
@@ -851,7 +993,7 @@ class BottomEditorMenu extends StatelessWidget {
 class MenuIconButton extends StatelessWidget {
   final IconData icon;
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool isSelected;
 
   const MenuIconButton({
@@ -872,10 +1014,10 @@ class MenuIconButton extends StatelessWidget {
         ),
       ),
       onPressed: onPressed,
-      icon: Icon(icon, color: Colors.white),
+      icon: Icon(icon, color: onPressed == null ? Colors.white38 : Colors.white),
       label: Text(
         label,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: onPressed == null ? Colors.white38 : Colors.white),
       ),
     );
   }
