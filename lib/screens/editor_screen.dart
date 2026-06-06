@@ -1,20 +1,49 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 class EditorScreen extends StatefulWidget {
+  final String imagePath;
+
+  const EditorScreen({super.key, required this.imagePath});
+
   @override
-  _EditorScreenState createState() => _EditorScreenState();
+  State<EditorScreen> createState() => _EditorScreenState();
 }
 
 class _EditorScreenState extends State<EditorScreen> {
   bool isPanelOpen = true;
   List<Widget> lashes = [];
+  late String selectedImagePath;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedImagePath = widget.imagePath;
+  }
+
+  Future<void> replaceImage(ImageSource source) async {
+    final ImagePicker picker = ImagePicker();
+
+    final XFile? image = await picker.pickImage(
+      source: source,
+    );
+
+    if (image == null) return;
+
+    setState(() {
+      /// Se reemplaza la imagen base. No se acumulan varias fotos.
+      selectedImagePath = image.path;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          /// AREA EDITOR (CARA)
+          /// AREA EDITOR (FOTO SELECCIONADA)
           Positioned.fill(
             child: DragTarget<String>(
               onAccept: (imagePath) {
@@ -26,9 +55,10 @@ class _EditorScreenState extends State<EditorScreen> {
               },
               builder: (context, candidateData, rejectedData) {
                 return Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Image.asset(
-                      "assets/sample_face.jpg",
+                    Image.file(
+                      File(selectedImagePath),
                       fit: BoxFit.cover,
                     ),
                     ...lashes,
@@ -38,9 +68,48 @@ class _EditorScreenState extends State<EditorScreen> {
             ),
           ),
 
+          /// BOTONES PARA REEMPLAZAR LA FOTO BASE
+          Positioned(
+            right: 12,
+            top: MediaQuery.of(context).padding.top + 12,
+            child: Column(
+              children: [
+                Material(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(24),
+                  child: IconButton(
+                    tooltip: 'Reemplazar con cámara',
+                    icon: const Icon(
+                      Icons.photo_camera,
+                      color: Colors.white,
+                    ),
+                    onPressed: () {
+                      replaceImage(ImageSource.camera);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Material(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(24),
+                  child: IconButton(
+                    tooltip: 'Reemplazar desde galería',
+                    icon: const Icon(
+                      Icons.photo_library,
+                      color: Colors.white,
+                    ),
+                    onPressed: () {
+                      replaceImage(ImageSource.gallery);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           /// PANEL LATERAL DESPLEGABLE
           AnimatedPositioned(
-            duration: Duration(milliseconds: 300),
+            duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
             left: isPanelOpen ? 0 : -120,
             top: 0,
@@ -129,10 +198,10 @@ class _EditorScreenState extends State<EditorScreen> {
 class LashDraggable extends StatefulWidget {
   final String imagePath;
 
-  LashDraggable({required this.imagePath});
+  const LashDraggable({super.key, required this.imagePath});
 
   @override
-  _LashDraggableState createState() => _LashDraggableState();
+  State<LashDraggable> createState() => _LashDraggableState();
 }
 
 class _LashDraggableState extends State<LashDraggable> {
