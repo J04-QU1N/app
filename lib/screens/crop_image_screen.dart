@@ -105,8 +105,14 @@ class _CropImageScreenState extends State<CropImageScreen> {
     final double scaledWidth = imageWidth * scale;
     final double scaledHeight = imageHeight * scale;
 
-    final double maxX = ((scaledWidth - cropWidth) / 2).clamp(0, double.infinity).toDouble();
-    final double maxY = ((scaledHeight - cropHeight) / 2).clamp(0, double.infinity).toDouble();
+    // Dejamos un margen interno mínimo para evitar que, por redondeo de píxeles,
+    // pueda aparecer borde negro en derecha/abajo al empujar la foto al límite.
+    final double maxX = (((scaledWidth - cropWidth) / 2) - 1)
+        .clamp(0, double.infinity)
+        .toDouble();
+    final double maxY = (((scaledHeight - cropHeight) / 2) - 1)
+        .clamp(0, double.infinity)
+        .toDouble();
 
     return Offset(
       offset.dx.clamp(-maxX, maxX).toDouble(),

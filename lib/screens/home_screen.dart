@@ -15,37 +15,33 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  Future<void> pickImage(
-    BuildContext context,
-    ImageSource source,
-  ) async {
+  late final Future<void> _loadSavedHistoryFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedHistoryFuture = SavedImageStore.load();
+  }
+
+  Future<void> pickImage(BuildContext context, ImageSource source) async {
     final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: source);
 
-    final XFile? image = await picker.pickImage(
-      source: source,
-    );
-
-    if (image == null) return;
-    if (!context.mounted) return;
+    if (image == null || !context.mounted) return;
 
     final String? croppedImagePath = await Navigator.push<String?>(
       context,
       MaterialPageRoute(
-        builder: (_) => CropImageScreen(
-          imagePath: image.path,
-        ),
+        builder: (_) => CropImageScreen(imagePath: image.path),
       ),
     );
 
-    if (croppedImagePath == null) return;
-    if (!context.mounted) return;
+    if (croppedImagePath == null || !context.mounted) return;
 
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => EditorScreen(
-          imagePath: croppedImagePath,
-        ),
+        builder: (_) => EditorScreen(imagePath: croppedImagePath),
       ),
     );
 
@@ -77,18 +73,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 12),
                 ListTile(
                   leading: const Icon(Icons.photo_camera, color: Colors.white),
-                  title: const Text(
-                    'Tomar foto',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  title: const Text('Tomar foto', style: TextStyle(color: Colors.white)),
                   onTap: () => Navigator.pop(context, ImageSource.camera),
                 ),
                 ListTile(
                   leading: const Icon(Icons.photo_library, color: Colors.white),
-                  title: const Text(
-                    'Elegir de galería',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  title: const Text('Elegir de galería', style: TextStyle(color: Colors.white)),
                   onTap: () => Navigator.pop(context, ImageSource.gallery),
                 ),
               ],
@@ -105,9 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> showSavedHistory() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => const SavedHistoryScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const SavedHistoryScreen()),
     );
 
     if (mounted) setState(() {});
@@ -115,48 +103,51 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  'LashVision',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 34,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 60),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: showImageOptions,
-                    icon: const Icon(Icons.add_photo_alternate),
-                    label: const Text('Nueva imagen'),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: showSavedHistory,
-                    icon: const Icon(Icons.history),
-                    label: Text(
-                      'Historial guardado (${SavedImageStore.items.length})',
+    return FutureBuilder<void>(
+      future: _loadSavedHistoryFuture,
+      builder: (context, snapshot) {
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      'LashVision',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 60),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: showImageOptions,
+                        icon: const Icon(Icons.add_photo_alternate),
+                        label: const Text('Nueva imagen'),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: showSavedHistory,
+                        icon: const Icon(Icons.history),
+                        label: Text('Historial guardado (${SavedImageStore.items.length})'),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -166,62 +157,69 @@ class SavedHistoryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<SavedEditedImage> items = SavedImageStore.items;
+    return FutureBuilder<void>(
+      future: SavedImageStore.load(),
+      builder: (context, snapshot) {
+        final List<SavedEditedImage> items = SavedImageStore.items;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: const Text('Historial guardado'),
-      ),
-      body: items.isEmpty
-          ? const Center(
-              child: Text(
-                'Todavía no guardaste imágenes.',
-                style: TextStyle(color: Colors.white70),
-              ),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final SavedEditedImage item = items[index];
-                return Card(
-                  color: Colors.white10,
-                  child: ListTile(
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.file(
-                        File(item.path),
-                        width: 56,
-                        height: 74,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    title: Text(
-                      item.label,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                    subtitle: Text(
-                      item.path,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white54),
-                    ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => EditorScreen(imagePath: item.path),
-                        ),
-                      );
-                    },
+        return Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: const Text('Historial guardado'),
+          ),
+          body: items.isEmpty
+              ? const Center(
+                  child: Text(
+                    'Todavía no guardaste imágenes.',
+                    style: TextStyle(color: Colors.white70),
                   ),
-                );
-              },
-            ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final SavedEditedImage item = items[index];
+                    return Card(
+                      color: Colors.white10,
+                      child: ListTile(
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            File(item.path),
+                            width: 56,
+                            height: 74,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox(
+                              width: 56,
+                              height: 74,
+                              child: Icon(Icons.broken_image, color: Colors.white54),
+                            ),
+                          ),
+                        ),
+                        title: Text(item.label, style: const TextStyle(color: Colors.white)),
+                        subtitle: Text(
+                          item.path,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white54),
+                        ),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => EditorScreen(imagePath: item.path),
+                            ),
+                          );
+                        },
+                      ),
+                    );
+                  },
+                ),
+        );
+      },
     );
   }
 }
