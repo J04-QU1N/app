@@ -41,45 +41,66 @@ class _EditorScreenState extends State<EditorScreen> {
           /// PANEL LATERAL DESPLEGABLE
           AnimatedPositioned(
             duration: Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
             left: isPanelOpen ? 0 : -120,
             top: 0,
             bottom: 0,
             child: Container(
               width: 120,
               color: Colors.black87,
-              child: Column(
-                children: [
-                  SizedBox(height: 50),
-
-                  IconButton(
-                    icon: Icon(
-                      isPanelOpen
-                          ? Icons.arrow_back
-                          : Icons.arrow_forward,
-                      color: Colors.white,
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    IconButton(
+                      icon: const Icon(
+                        Icons.arrow_back,
+                        color: Colors.white,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          isPanelOpen = false;
+                        });
+                      },
                     ),
-                    onPressed: () {
-                      setState(() {
-                        isPanelOpen = !isPanelOpen;
-                      });
-                    },
-                  ),
 
-                  SizedBox(height: 20),
+                    const SizedBox(height: 20),
 
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        buildDraggableItem("assets/lashes/lash1.png"),
-                        buildDraggableItem("assets/lashes/lash2.png"),
-                        buildDraggableItem("assets/lashes/lash3.png"),
-                      ],
-                    ),
-                  )
-                ],
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          buildDraggableItem("assets/lashes/lash1.png"),
+                          buildDraggableItem("assets/lashes/lash2.png"),
+                          buildDraggableItem("assets/lashes/lash3.png"),
+                        ],
+                      ),
+                    )
+                  ],
+                ),
               ),
             ),
           ),
+
+          /// BOTON PARA VOLVER A ABRIR EL PANEL
+          if (!isPanelOpen)
+            Positioned(
+              left: 12,
+              top: MediaQuery.of(context).padding.top + 12,
+              child: Material(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(24),
+                child: IconButton(
+                  icon: const Icon(
+                    Icons.menu,
+                    color: Colors.white,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      isPanelOpen = true;
+                    });
+                  },
+                ),
+              ),
+            ),
         ],
       ),
     );
