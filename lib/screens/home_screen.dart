@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'crop_image_screen.dart';
 import 'editor_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -17,14 +18,25 @@ class HomeScreen extends StatelessWidget {
     );
 
     if (image == null) return;
+    if (!context.mounted) return;
 
+    final String? croppedImagePath = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CropImageScreen(
+          imagePath: image.path,
+        ),
+      ),
+    );
+
+    if (croppedImagePath == null) return;
     if (!context.mounted) return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => EditorScreen(
-          imagePath: image.path,
+          imagePath: croppedImagePath,
         ),
       ),
     );
