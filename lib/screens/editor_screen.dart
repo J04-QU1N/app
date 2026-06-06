@@ -34,6 +34,7 @@ class _EditorScreenState extends State<EditorScreen> {
   final GlobalKey _editorCaptureKey = GlobalKey();
 
   bool isPanelOpen = true;
+  bool _isExportingImage = false;
   late String selectedImagePath;
 
   final List<LashElement> lashes = [];
@@ -206,7 +207,21 @@ class _EditorScreenState extends State<EditorScreen> {
     controller.dispose();
     if (label == null || label.trim().isEmpty) return;
 
+    final int? previousSelectedLashId = selectedLashId;
+    final bool previousEditMenuOpen = isEditMenuOpen;
+    final LashEditMode previousEditMode = lashEditMode;
+
     try {
+      // Exportamos exactamente el lienzo 3:4, pero sin borde, pads ni menús de selección.
+      // Esto evita que la captura guarde una composición distinta a la que ve el usuario.
+      setState(() {
+        _isExportingImage = true;
+        selectedLashId = null;
+        isEditMenuOpen = false;
+        lashEditMode = LashEditMode.move;
+      });
+      await WidgetsBinding.instance.endOfFrame;
+
       final RenderRepaintBoundary boundary = _editorCaptureKey.currentContext!
           .findRenderObject()! as RenderRepaintBoundary;
       final ui.Image image = await boundary.toImage(pixelRatio: 3);
@@ -241,6 +256,15 @@ class _EditorScreenState extends State<EditorScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo guardar la imagen.')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExportingImage = false;
+          selectedLashId = previousSelectedLashId;
+          isEditMenuOpen = previousEditMenuOpen;
+          lashEditMode = previousEditMode;
+        });
+      }
     }
   }
 
@@ -252,7 +276,8 @@ class _EditorScreenState extends State<EditorScreen> {
         LashElement(
           id: id,
           imagePath: imagePath,
-          position: const Offset(210, 280),
+          position: const Offset(190, 260),
+          scale: 1.25,
         ),
       );
       selectedLashId = id;
@@ -558,7 +583,7 @@ class _EditorScreenState extends State<EditorScreen> {
                             ...lashes.map(
                               (lash) => EditableLashWidget(
                                 lash: lash,
-                                isSelected: selectedLashId == lash.id,
+                                isSelected: !_isExportingImage && selectedLashId == lash.id,
                                 editMode: selectedLashId == lash.id
                                     ? lashEditMode
                                     : LashEditMode.move,
@@ -844,8 +869,9 @@ class LashElement {
 }
 
 class EditableLashWidget extends StatelessWidget {
-  static const double baseWidth = 200;
-  static const double baseHeight = 90;
+  static const double baseWidth = 118;
+  static const double baseHeight = 54;
+  static const double imageContentScale = 1.85;
 
   final LashElement lash;
   final bool isSelected;
@@ -886,8 +912,8 @@ class EditableLashWidget extends StatelessWidget {
 
     final double transformedWidth = baseWidth * lash.scale * lash.stretchX;
     final double transformedHeight = baseHeight * lash.scale * lash.stretchY;
-    final double boxWidth = transformedWidth + 96;
-    final double boxHeight = transformedHeight + 74;
+    final double boxWidth = transformedWidth + 74;
+    final double boxHeight = transformedHeight + 60;
     final Offset elementCenter = Offset(boxWidth / 2, boxHeight / 2);
 
     final Widget transformedElement = Transform(
@@ -905,9 +931,14 @@ class EditableLashWidget extends StatelessWidget {
           fit: StackFit.expand,
           clipBehavior: Clip.none,
           children: [
-            Image.asset(
-              lash.imagePath,
-              fit: BoxFit.contain,
+            ClipRect(
+              child: Transform.scale(
+                scale: imageContentScale,
+                child: Image.asset(
+                  lash.imagePath,
+                  fit: BoxFit.contain,
+                ),
+              ),
             ),
             if (isSelected)
               Positioned.fill(
