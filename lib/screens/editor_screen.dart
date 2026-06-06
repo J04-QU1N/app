@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -20,8 +21,8 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   static const double editorAspectRatio = 3 / 4;
-  static const double _bottomActionsHeight = 88;
-  static const double _elementMenuHeight = 86;
+  static const double _bottomActionsHeight = 64;
+  static const double _elementMenuHeight = 58;
 
   final GlobalKey _editorCaptureKey = GlobalKey();
 
@@ -242,7 +243,7 @@ class _EditorScreenState extends State<EditorScreen> {
         LashElement(
           id: id,
           imagePath: imagePath,
-          position: const Offset(90, 180),
+          position: const Offset(210, 280),
         ),
       );
       selectedLashId = id;
@@ -353,12 +354,11 @@ class _EditorScreenState extends State<EditorScreen> {
         );
         break;
       case LashEditMode.rotate:
-        if (details.rotation.abs() < 0.001 && details.focalPointDelta == Offset.zero) {
+        if (details.rotation.abs() < 0.001) {
           return;
         }
         _saveGestureHistoryIfNeeded();
         updated = current.copyWith(
-          position: current.position + details.focalPointDelta,
           rotation: _gestureStartRotation + details.rotation,
         );
         break;
@@ -385,36 +385,64 @@ class _EditorScreenState extends State<EditorScreen> {
     _saveGestureHistoryIfNeeded();
 
     final LashElement current = lashes[index];
-    final double dx = details.delta.dx;
-    final double dy = details.delta.dy;
-    final double xStep = dx / (EditableLashWidget.baseWidth * current.scale);
-    final double yStep = dy / (EditableLashWidget.baseHeight * current.scale);
+
+    // Convertimos el arrastre global del dedo al eje local del elemento.
+    // Así los pads siguen funcionando aunque el elemento esté rotado.
+    final double cosR = math.cos(-current.rotation);
+    final double sinR = math.sin(-current.rotation);
+    final Offset localDelta = Offset(
+      details.delta.dx * cosR - details.delta.dy * sinR,
+      details.delta.dx * sinR + details.delta.dy * cosR,
+    );
+
+    final double visualWidth = EditableLashWidget.baseWidth * current.scale * current.stretchX;
+    final double visualHeight = EditableLashWidget.baseHeight * current.scale * current.stretchY;
 
     double nextScale = current.scale;
     double nextStretchX = current.stretchX;
     double nextStretchY = current.stretchY;
     Offset nextPosition = current.position;
 
+    Offset localCenterShift = Offset.zero;
+
     switch (handle) {
       case LashResizeHandle.left:
-        nextStretchX = (current.stretchX - xStep).clamp(0.25, 4).toDouble();
-        nextPosition = current.position + Offset(dx, 0);
+        final double newWidth = (visualWidth - localDelta.dx).clamp(28.0, 900.0);
+        final double widthDelta = newWidth - visualWidth;
+        nextStretchX = (newWidth / (EditableLashWidget.baseWidth * current.scale)).clamp(0.18, 6).toDouble();
+        localCenterShift = Offset(-widthDelta / 2, 0);
         break;
       case LashResizeHandle.right:
-        nextStretchX = (current.stretchX + xStep).clamp(0.25, 4).toDouble();
+        final double newWidth = (visualWidth + localDelta.dx).clamp(28.0, 900.0);
+        final double widthDelta = newWidth - visualWidth;
+        nextStretchX = (newWidth / (EditableLashWidget.baseWidth * current.scale)).clamp(0.18, 6).toDouble();
+        localCenterShift = Offset(widthDelta / 2, 0);
         break;
       case LashResizeHandle.top:
-        nextStretchY = (current.stretchY - yStep).clamp(0.25, 4).toDouble();
-        nextPosition = current.position + Offset(0, dy);
+        final double newHeight = (visualHeight - localDelta.dy).clamp(18.0, 700.0);
+        final double heightDelta = newHeight - visualHeight;
+        nextStretchY = (newHeight / (EditableLashWidget.baseHeight * current.scale)).clamp(0.18, 6).toDouble();
+        localCenterShift = Offset(0, -heightDelta / 2);
         break;
       case LashResizeHandle.bottom:
-        nextStretchY = (current.stretchY + yStep).clamp(0.25, 4).toDouble();
+        final double newHeight = (visualHeight + localDelta.dy).clamp(18.0, 700.0);
+        final double heightDelta = newHeight - visualHeight;
+        nextStretchY = (newHeight / (EditableLashWidget.baseHeight * current.scale)).clamp(0.18, 6).toDouble();
+        localCenterShift = Offset(0, heightDelta / 2);
         break;
       case LashResizeHandle.corner:
-        final double dominantDelta = dx.abs() >= dy.abs() ? dx : dy;
-        final double factor = dominantDelta / 180;
-        nextScale = (current.scale + factor).clamp(0.15, 5).toDouble();
+        final double factor = 1 + ((localDelta.dx + localDelta.dy) / 260);
+        nextScale = (current.scale * factor).clamp(0.15, 5).toDouble();
         break;
+    }
+
+    if (localCenterShift != Offset.zero) {
+      final double cosForward = math.cos(current.rotation);
+      final double sinForward = math.sin(current.rotation);
+      nextPosition = current.position + Offset(
+        localCenterShift.dx * cosForward - localCenterShift.dy * sinForward,
+        localCenterShift.dx * sinForward + localCenterShift.dy * cosForward,
+      );
     }
 
     setState(() {
@@ -441,10 +469,8 @@ class _EditorScreenState extends State<EditorScreen> {
       body: Stack(
         children: [
           Positioned.fill(
-            top: topPadding + 72,
-            bottom: hasSelectedLash
-                ? _bottomActionsHeight + _elementMenuHeight + 22
-                : _bottomActionsHeight + 22,
+            top: topPadding + 86,
+            bottom: _bottomActionsHeight + _elementMenuHeight + 18,
             child: Align(
               alignment: Alignment.center,
               child: AspectRatio(
@@ -553,7 +579,7 @@ class _EditorScreenState extends State<EditorScreen> {
               right: 0,
               bottom: _bottomActionsHeight,
               child: SafeArea(
-                minimum: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                minimum: const EdgeInsets.fromLTRB(10, 0, 10, 4),
                 child: isEditMenuOpen ? buildTransformMenu() : buildMainElementMenu(),
               ),
             ),
@@ -563,7 +589,7 @@ class _EditorScreenState extends State<EditorScreen> {
             right: 0,
             bottom: 0,
             child: SafeArea(
-              minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              minimum: const EdgeInsets.fromLTRB(10, 0, 10, 8),
               child: BottomEditorMenu(
                 children: [
                   MenuIconButton(
@@ -783,96 +809,77 @@ class EditableLashWidget extends StatelessWidget {
       LashEditMode.move => 'Arrastrá para mover',
     };
 
-    final Widget image = SizedBox(
-      width: baseWidth,
-      height: baseHeight,
-      child: Stack(
-        fit: StackFit.expand,
-        clipBehavior: Clip.none,
-        children: [
-          Image.asset(
-            lash.imagePath,
-            fit: BoxFit.contain,
-          ),
-          if (isSelected)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.white, width: 2),
+    final double transformedWidth = baseWidth * lash.scale * lash.stretchX;
+    final double transformedHeight = baseHeight * lash.scale * lash.stretchY;
+    final double boxWidth = transformedWidth + 96;
+    final double boxHeight = transformedHeight + 74;
+    final Offset elementCenter = Offset(boxWidth / 2, boxHeight / 2);
+
+    final Widget transformedElement = Transform(
+      alignment: Alignment.center,
+      transform: Matrix4.identity()
+        ..rotateZ(lash.rotation)
+        ..scale(
+          (lash.isMirrored ? -1.0 : 1.0) * lash.scale * lash.stretchX,
+          lash.scale * lash.stretchY,
+        ),
+      child: SizedBox(
+        width: baseWidth,
+        height: baseHeight,
+        child: Stack(
+          fit: StackFit.expand,
+          clipBehavior: Clip.none,
+          children: [
+            Image.asset(
+              lash.imagePath,
+              fit: BoxFit.contain,
+            ),
+            if (isSelected)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
 
     return Positioned(
-      left: lash.position.dx,
-      top: lash.position.dy,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: onTap,
-        onScaleStart: onScaleStart,
-        onScaleUpdate: onScaleUpdate,
-        onScaleEnd: onScaleEnd,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Transform.rotate(
-              angle: lash.rotation,
-              alignment: Alignment.topLeft,
-              child: Transform.scale(
-                alignment: Alignment.topLeft,
-                scaleX: (lash.isMirrored ? -1 : 1) * lash.scale * lash.stretchX,
-                scaleY: lash.scale * lash.stretchY,
-                child: image,
-              ),
+      left: lash.position.dx - boxWidth / 2,
+      top: lash.position.dy - boxHeight / 2,
+      width: boxWidth,
+      height: boxHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Center(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: onTap,
+              onScaleStart: onScaleStart,
+              onScaleUpdate: onScaleUpdate,
+              onScaleEnd: onScaleEnd,
+              child: transformedElement,
             ),
-            if (isSelected && editMode == LashEditMode.resize) ...[
-              _Handle(
-                left: -10,
-                top: baseHeight / 2 - 10,
-                icon: Icons.drag_indicator,
-                onPanUpdate: (details) => onHandleDrag(LashResizeHandle.left, details),
-                onPanEnd: onHandleDragEnd,
-              ),
-              _Handle(
-                left: baseWidth - 10,
-                top: baseHeight / 2 - 10,
-                icon: Icons.drag_indicator,
-                onPanUpdate: (details) => onHandleDrag(LashResizeHandle.right, details),
-                onPanEnd: onHandleDragEnd,
-              ),
-              _Handle(
-                left: baseWidth / 2 - 10,
-                top: -10,
-                icon: Icons.drag_handle,
-                onPanUpdate: (details) => onHandleDrag(LashResizeHandle.top, details),
-                onPanEnd: onHandleDragEnd,
-              ),
-              _Handle(
-                left: baseWidth / 2 - 10,
-                top: baseHeight - 10,
-                icon: Icons.drag_handle,
-                onPanUpdate: (details) => onHandleDrag(LashResizeHandle.bottom, details),
-                onPanEnd: onHandleDragEnd,
-              ),
-              _Handle(
-                left: baseWidth - 8,
-                top: baseHeight - 8,
-                icon: Icons.open_in_full,
-                isCorner: true,
-                onPanUpdate: (details) => onHandleDrag(LashResizeHandle.corner, details),
-                onPanEnd: onHandleDragEnd,
-              ),
-            ],
-            if (isSelected)
-              Positioned(
-                left: 0,
-                top: baseHeight + 12,
-                child: IgnorePointer(
+          ),
+          if (isSelected && editMode == LashEditMode.resize)
+            ..._buildHandles(
+              elementCenter: elementCenter,
+              width: transformedWidth,
+              height: transformedHeight,
+            ),
+          if (isSelected)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                child: Center(
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -886,24 +893,88 @@ class EditableLashWidget extends StatelessWidget {
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
+  }
+
+  List<Widget> _buildHandles({
+    required Offset elementCenter,
+    required double width,
+    required double height,
+  }) {
+    Offset rotatePoint(Offset point) {
+      final double cosR = math.cos(lash.rotation);
+      final double sinR = math.sin(lash.rotation);
+      final Offset fromCenter = point;
+      return Offset(
+        elementCenter.dx + fromCenter.dx * cosR - fromCenter.dy * sinR,
+        elementCenter.dy + fromCenter.dx * sinR + fromCenter.dy * cosR,
+      );
+    }
+
+    Widget handleAt({
+      required Offset localPoint,
+      required LashResizeHandle handle,
+      required IconData icon,
+      bool isCorner = false,
+    }) {
+      final Offset point = rotatePoint(localPoint);
+      final double size = isCorner ? 36 : 30;
+      return Positioned(
+        left: point.dx - size / 2,
+        top: point.dy - size / 2,
+        child: _Handle(
+          size: size,
+          icon: icon,
+          isCorner: isCorner,
+          onPanUpdate: (details) => onHandleDrag(handle, details),
+          onPanEnd: onHandleDragEnd,
+        ),
+      );
+    }
+
+    return [
+      handleAt(
+        localPoint: Offset(-width / 2, 0),
+        handle: LashResizeHandle.left,
+        icon: Icons.drag_indicator,
+      ),
+      handleAt(
+        localPoint: Offset(width / 2, 0),
+        handle: LashResizeHandle.right,
+        icon: Icons.drag_indicator,
+      ),
+      handleAt(
+        localPoint: Offset(0, -height / 2),
+        handle: LashResizeHandle.top,
+        icon: Icons.drag_handle,
+      ),
+      handleAt(
+        localPoint: Offset(0, height / 2),
+        handle: LashResizeHandle.bottom,
+        icon: Icons.drag_handle,
+      ),
+      handleAt(
+        localPoint: Offset(width / 2, height / 2),
+        handle: LashResizeHandle.corner,
+        icon: Icons.open_in_full,
+        isCorner: true,
+      ),
+    ];
   }
 }
 
 class _Handle extends StatelessWidget {
-  final double left;
-  final double top;
+  final double size;
   final IconData icon;
   final bool isCorner;
   final ValueChanged<DragUpdateDetails> onPanUpdate;
   final VoidCallback onPanEnd;
 
   const _Handle({
-    required this.left,
-    required this.top,
+    required this.size,
     required this.icon,
     required this.onPanUpdate,
     required this.onPanEnd,
@@ -912,23 +983,25 @@ class _Handle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: left,
-      top: top,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanUpdate: onPanUpdate,
-        onPanEnd: (_) => onPanEnd(),
-        child: Container(
-          width: isCorner ? 30 : 24,
-          height: isCorner ? 30 : 24,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.black, width: 2),
-          ),
-          child: Icon(icon, color: Colors.black, size: isCorner ? 16 : 14),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: onPanUpdate,
+      onPanEnd: (_) => onPanEnd(),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.black, width: 2),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black45,
+              blurRadius: 4,
+            ),
+          ],
         ),
+        child: Icon(icon, color: Colors.black, size: isCorner ? 18 : 15),
       ),
     );
   }
@@ -985,22 +1058,19 @@ class BottomEditorMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.black87,
-      borderRadius: BorderRadius.circular(24),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: children
-                .map(
-                  (child) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: child,
-                  ),
-                )
-                .toList(),
-          ),
+      borderRadius: BorderRadius.circular(20),
+      child: SizedBox(
+        height: 54,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: children
+              .map(
+                (child) => Expanded(
+                  child: Center(child: child),
+                ),
+              )
+              .toList(),
         ),
       ),
     );
@@ -1023,16 +1093,37 @@ class MenuIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
-      style: TextButton.styleFrom(
-        backgroundColor: isSelected ? Colors.white24 : Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      ),
-      onPressed: onPressed,
-      icon: Icon(icon, color: onPressed == null ? Colors.white38 : Colors.white),
-      label: Text(
-        label,
-        style: TextStyle(color: onPressed == null ? Colors.white38 : Colors.white),
+    final Color foreground = onPressed == null ? Colors.white38 : Colors.white;
+
+    return Material(
+      color: isSelected ? Colors.white24 : Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: foreground, size: 20),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
