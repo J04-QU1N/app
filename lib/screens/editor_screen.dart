@@ -171,7 +171,49 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
 
+  Future<Uint8List?> _captureEditorBytes() async {
+    setState(() => _isExportingImage = true);
+
+    // Esperamos a que el árbol se redibuje sin controles. La captura se hace
+    // ANTES de abrir el diálogo con TextField, porque el teclado/insets del
+    // sistema pueden cambiar temporalmente el layout del canvas y eso termina
+    // desfasando las pestañas en la imagen guardada.
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+
+    final RenderRepaintBoundary boundary = _editorCaptureKey.currentContext!
+        .findRenderObject()! as RenderRepaintBoundary;
+    final ui.Image image = await boundary.toImage(pixelRatio: 3);
+    final ByteData? byteData = await image.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+
+    if (mounted) {
+      setState(() => _isExportingImage = false);
+    }
+
+    return byteData?.buffer.asUint8List();
+  }
+
   Future<void> saveEditedImage() async {
+    Uint8List? bytes;
+
+    try {
+      bytes = await _captureEditorBytes();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _isExportingImage = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo preparar la imagen: $error')),
+        );
+      }
+      return;
+    }
+
+    if (bytes == null) return;
+
+    if (!mounted) return;
+
     final TextEditingController controller = TextEditingController();
 
     final String? label = await showDialog<String>(
@@ -209,24 +251,6 @@ class _EditorScreenState extends State<EditorScreen> {
     if (label == null || label.trim().isEmpty) return;
 
     try {
-      // Volvemos al método que guardaba bien: capturar exactamente el RepaintBoundary
-      // del editor. No redibujamos manualmente las pestañas, porque ahí se desfasaban
-      // por márgenes internos/escala de los PNG. Solo ocultamos los controles visuales
-      // sin cambiar selección, posición, tamaño ni modo de edición.
-      setState(() => _isExportingImage = true);
-      await WidgetsBinding.instance.endOfFrame;
-
-      final RenderRepaintBoundary boundary = _editorCaptureKey.currentContext!
-          .findRenderObject()! as RenderRepaintBoundary;
-      final double pixelRatio = MediaQuery.of(context).devicePixelRatio;
-      final ui.Image image = await boundary.toImage(pixelRatio: pixelRatio);
-      final ByteData? byteData = await image.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
-
-      if (byteData == null) return;
-
-      final Uint8List bytes = byteData.buffer.asUint8List();
       final String safeLabel = label.replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_');
       final Directory saveDirectory = await SavedImageStore.getImagesDirectory();
       final String outputPath =
@@ -246,15 +270,11 @@ class _EditorScreenState extends State<EditorScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Imagen guardada como "$label"')),
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo guardar la imagen.')),
+        SnackBar(content: Text('No se pudo guardar la imagen: $error')),
       );
-    } finally {
-      if (mounted) {
-        setState(() => _isExportingImage = false);
-      }
     }
   }
 
